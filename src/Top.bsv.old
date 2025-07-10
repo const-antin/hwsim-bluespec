@@ -1,0 +1,186 @@
+package Top;
+
+import FloatingPoint::*;
+import Vector::*;
+import FShow::*;
+import Stage::*;
+import Types::*;
+import Interconnect::*;
+
+// Top.bsv
+// A simple counter program in Bluespec SystemVerilog
+
+interface Matmul_IFC;
+    method Action put_row_position(Int#(32) row_position);
+    method Action put_num_rows(Int#(32) num_rows);
+
+    method Action put_a(Tile a_in);
+    method Action put_b(Tile b_in);
+    method Action put_previous_partial_product(Tile partial_product_in);
+
+    method Action put_is_first_row(Bool is_first_row);
+
+    method ActionValue#(Tile) get_partial_product();
+    method ActionValue#(Tile) get_a();
+    method ActionValue#(Tile) get_b();
+endinterface
+
+(* synthesize *)
+module mkMatmul(Matmul_IFC);
+    Reg#(Maybe#(Tile)) a <- mkReg(tagged Invalid);
+    Reg#(Bool) a_used <- mkReg(False);
+    Reg#(Maybe#(Tile)) b <- mkReg(tagged Invalid);
+    
+    Reg#(Maybe#(Tile)) previous_partial_product <- mkReg(tagged Invalid);
+    Reg#(Maybe#(Tile)) partial_product <- mkReg(tagged Invalid);
+
+    Reg#(Maybe#(Int#(32))) row_position <- mkReg(tagged Invalid);
+    Reg#(Maybe#(Int#(32))) num_rows <- mkReg(tagged Invalid);
+
+    Reg#(Bool) is_first_row <- mkReg(True);
+
+    Reg#(Int#(32)) num_loaded_weights <- mkReg(0);
+    Reg#(Int#(32)) num_loaded_inputs <- mkReg(0);
+    Reg#(Int#(32)) num_calculated_partial_products <- mkReg(0);
+
+    method Action put_row_position(Int#(32) row_position_in);
+        row_position <= tagged Valid row_position_in;
+    endmethod
+
+    method Action put_num_rows(Int#(32) num_rows_in);
+        num_rows <= tagged Valid num_rows_in;
+    endmethod
+
+    method Action put_a(Tile a_in) if (!isValid(a));
+        a <= tagged Valid a_in;
+        a_used <= False;
+        num_loaded_inputs <= num_loaded_inputs + 1;
+    endmethod
+
+    method Action put_b(Tile b_in) if (!isValid(b) && num_loaded_weights < validValue(row_position));
+        b <= tagged Valid b_in;
+        num_loaded_weights <= num_loaded_weights + 1;
+    endmethod
+
+    method Action put_previous_partial_product(Tile previous_partial_product_in) if (!isValid(previous_partial_product));
+        previous_partial_product <= tagged Valid previous_partial_product_in;
+    endmethod
+
+    method Action put_is_first_row(Bool is_first_row_in);
+        is_first_row <= is_first_row_in;
+    endmethod
+
+    method ActionValue#(Tile) get_a() if (a_used);
+        let a_tile = fromMaybe(?, a);
+        a <= tagged Invalid;
+        a_used <= False;
+        return a_tile;
+    endmethod
+
+    method ActionValue#(Tile) get_b() if (num_loaded_weights < fromInteger(valueOf(TILE_SIZE)));
+        let b_tile = fromMaybe(?, b);
+        b <= tagged Invalid;
+        return b_tile;
+    endmethod
+
+    method ActionValue#(Tile) get_partial_product() if (num_loaded_weights == validValue(row_position) && !a_used);
+        let a_tile = fromMaybe(?, a);
+        let b_tile = fromMaybe(?, b);
+
+        Tile partial_product_tile;
+        if (is_first_row) begin
+            partial_product_tile = replicate(replicate(0));
+        end else begin 
+            partial_product_tile = fromMaybe(?, previous_partial_product);
+            previous_partial_product <= tagged Invalid;
+        end
+        partial_product_tile = add_tile(matmul_t_tile(a_tile, b_tile), partial_product_tile);
+        
+        a_used <= True;
+
+        if (num_calculated_partial_products == fromInteger(valueOf(TILE_SIZE))) begin
+            num_calculated_partial_products <= 0;
+            num_loaded_weights <= 0;
+            num_loaded_inputs <= 0;
+            a <= tagged Invalid;
+            b <= tagged Invalid;
+        end else begin 
+            num_calculated_partial_products <= num_calculated_partial_products + 1;
+        end
+        return partial_product_tile;
+    endmethod
+endmodule
+
+// Top module that runs the test
+module mkTop(Empty);
+    Vector#(2, Vector#(2, Matmul_IFC)) matmuls <- replicateM(replicateM(mkMatmul()));
+
+    Reg#(Int#(32)) state <- mkReg(0);
+
+    Reg#(Int#(32)) num_loaded_a <- mkReg(0);
+    Reg#(Int#(32)) num_loaded_b <- mkReg(0);
+
+    rule config_matmuls; 
+        matmuls[0][0].put_row_position(0);
+        matmuls[0][0].put_num_rows(2);
+        matmuls[0][0].put_is_first_row(True);
+
+        matmuls[0][1].put_row_position(0);
+        matmuls[0][1].put_num_rows(2);
+        matmuls[0][1].put_is_first_row(True);
+
+        matmuls[1][0].put_row_position(0);
+        matmuls[1][0].put_num_rows(2);
+        matmuls[1][0].put_is_first_row(True);
+
+        matmuls[1][1].put_row_position(0);
+        matmuls[1][1].put_num_rows(2);
+        matmuls[1][1].put_is_first_row(True);
+    endrule
+
+    rule put_a if (num_loaded_a < 2); 
+        let a_tile = Vector::replicate(Vector::replicate(1));
+        matmuls[0][0].put_a(a_tile);
+        matmuls[0][1].put_a(a_tile);
+        num_loaded_a <= num_loaded_a + 1;
+    endrule
+
+    rule put_b if (num_loaded_b < 2); 
+        let b_tile = Vector::replicate(Vector::replicate(1));
+        matmuls[0][0].put_b(b_tile);
+        matmuls[1][0].put_b(b_tile);
+        num_loaded_b <= num_loaded_b + 1;
+    endrule
+
+    rule connect_partial_products; 
+        let partial_product_tile <- matmuls[0][0].get_partial_product();
+        matmuls[0][1].put_previous_partial_product(partial_product_tile);
+
+        partial_product_tile <- matmuls[1][0].get_partial_product();
+        matmuls[1][1].put_previous_partial_product(partial_product_tile);
+    endrule
+
+    for (Integer i = 0; i < 2; i = i + 1) begin 
+        rule connect_a;
+            let a_tile <- matmuls[i][0].get_a();
+            matmuls[i][1].put_a(a_tile);
+        endrule
+    end
+
+
+    for (Integer i = 0; i < 2; i = i + 1) begin 
+        rule connect_b;
+            let b_tile <- matmuls[i][0].get_b();
+            matmuls[i][1].put_b(b_tile);
+        endrule
+    end
+
+    for (Integer i = 0; i < 2; i = i + 1) begin 
+        rule drain_partial_product;
+            let partial_product_tile <- matmuls[i][0].get_partial_product();
+            $display("Partial product: %d", partial_product_tile);
+        endrule
+    end
+endmodule
+
+endpackage 
