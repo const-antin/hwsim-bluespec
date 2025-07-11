@@ -14,4 +14,7 @@ typedef 4 NUM_STAGES;
 
 typedef Int#(32) Scalar;
 
+typedef 8 FRAMES_PER_SET;
+typedef 128 SETS;
+
 endpackage

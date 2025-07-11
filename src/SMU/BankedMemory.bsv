@@ -3,14 +3,12 @@ package BankedMemory;
 import Vector::*;
 import RegFile::*;
 import Types::*;
+import Parameters::*;
+import SetAllocator::*;
 
 // === Configuration ===
-typedef Int#(32) Scalar;
-typedef Int#(32) StopToken;
-typedef 2 TILE_SIZE;
-typedef 8 FRAMES_PER_SET;
-typedef Bit#(7) SetIdx;       // 128 sets 2^7
-typedef Bit#(3) FrameIdx;     // 8 tiles per set 2^3
+typedef Bit#(TLog#(SETS)) SetIdx;       // 128 sets 2^7
+typedef Bit#(TLog#(FRAMES_PER_SET)) FrameIdx;     // 8 tiles per set 2^3
 
 typedef Vector#(TILE_SIZE, Scalar) TileRow;
 typedef Vector#(TILE_SIZE, TileRow) Tile;
