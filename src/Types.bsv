@@ -68,6 +68,7 @@ import "BDPI" function Bit#(TileBits) add_tile_c(Bit#(TileBits) a, Bit#(TileBits
 import "BDPI" function Bit#(TileBits) sub_tile_c(Bit#(TileBits) a, Bit#(TileBits) b, Int#(32) tile_size);
 import "BDPI" function Bit#(TileBits) mul_tile_c(Bit#(TileBits) a, Bit#(TileBits) b, Int#(32) tile_size);
 import "BDPI" function Bit#(TileBits) div_tile_c(Bit#(TileBits) a, Bit#(TileBits) b, Int#(32) tile_size);
+import "BDPI" function Bit#(TileBits) silu_tile_c(Bit#(TileBits) a, Int#(32) tile_size);
 
 function Tile matmul_t_tile(Tile a, Tile b);
     Bit#(TileBits) a_packed = pack(a);
@@ -114,6 +115,12 @@ function Tile div_tile(Tile a, Tile b);
     return unpack(v);
 endfunction
 
+function Tile silu_tile(Tile a);
+    Bit#(TileBits) a_packed = pack(a);
+    let v = silu_tile_c(a_packed, fromInteger(valueOf(TILE_SIZE)));
+    return unpack(v);
+endfunction
+
 /*
 function Tile matmul_tile (Tile a, Tile b);
     Tile result = replicate(replicate(0));
@@ -140,17 +147,17 @@ typedef union tagged {
     Tile Tag_Tile;
     Ref Tag_Ref;
     Scalar Tag_Scalar;
-} Data deriving (Bits);
+} Data deriving (Bits, FShow);
 
 typedef struct {
     Int#(16) ptr;
     Int#(16) port_idx;
-} Instruction_Ptr deriving (Bits);
+} Instruction_Ptr deriving (Bits, FShow);
 
 typedef union tagged {
     Tuple2#(Data, StopToken) Tag_Data;
     Instruction_Ptr Tag_Instruction;
     EndToken Tag_EndToken;
-} ChannelMessage deriving (Bits);
+} ChannelMessage deriving (Bits, FShow);
 
 endpackage
