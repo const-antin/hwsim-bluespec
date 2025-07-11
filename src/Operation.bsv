@@ -64,7 +64,13 @@ module mkRepeatStatic#(Int#(32) num_repeats) (Operation_IFC);
         end
 
         output_fifo.enq(cur);
-        count <= count + 1;
+
+        if (cur matches tagged Tag_Deallocate_Storage .ptr) begin
+            input_fifo.deq;
+        end
+        else if (cur matches tagged Tag_Data .current) begin // This if is necessary so deallocates are not repeated
+            count <= count + 1;
+        end
     endrule
 
     rule dequeue if (count == num_repeats);
