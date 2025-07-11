@@ -16,7 +16,6 @@ module mkAccum#(function Tile func (Tile tile, Tile tile2), Int#(32) rank) (Oper
     Reg#(Maybe#(Tile)) acc <- mkReg(tagged Invalid);
 
     rule do_accum if (input_fifo.first matches tagged Tag_Data .current);
-        // $display("Accumulating");
         input_fifo.deq;
 
         let data = tpl_1(current);
@@ -225,7 +224,7 @@ module mkAccumBigTile#(Int#(32) rank, function Tile func (Tile tile, Tile tile2)
         let st = tpl_2(cur.Tag_Data);
         partial_output_fifo.enq(cur);
 
-        if (st >= rank) begin
+        if (st > rank) begin
             state <= AccumBigTile_Drain;
         end else if (st == rank) begin 
             state <= AccumBigTile_Accum;
@@ -238,7 +237,7 @@ module mkAccumBigTile#(Int#(32) rank, function Tile func (Tile tile, Tile tile2)
         input_fifo.deq;
         partial_input_fifo.deq;
 
-        let st = tpl_2(acc.Tag_Data);
+        let st = tpl_2(add.Tag_Data);
         let out = func(tpl_1(add.Tag_Data).Tag_Tile, tpl_1(acc.Tag_Data).Tag_Tile);
 
         if (st > rank) begin 
@@ -266,7 +265,7 @@ module mkAccumBigTile#(Int#(32) rank, function Tile func (Tile tile, Tile tile2)
             state <= AccumBigTile_Fill;
         end
 
-        partial_output_fifo.enq(tagged Tag_Data tuple2(tpl_1(data), out_st));
+        output_fifo.enq(tagged Tag_Data tuple2(tpl_1(data), out_st));
     endrule
     
     method Action put(Int#(32) input_port, ChannelMessage msg);
@@ -314,58 +313,42 @@ module mkTop(Empty);
     endrule
 
     rule pass_m1;
-        // $display("Passing m1");
         let msg <- m1.get(0);
-        $display("Passing (1) %s", fshow(msg));
         a1.put(0, msg);
     endrule
 
     rule pass_m2;
-        // $display("Passing m2");
         let msg <- m2.get(0);
-        $display("Passing (2) %s", fshow(msg));
         a2.put(0, msg);
     endrule
 
     rule pass_a1;
-        // $display("Passing a1");
         let msg <- a1.get(0);
-        $display("Passing (3) %s", fshow(msg));
         m3.put(0, msg);
     endrule
 
     rule pass_a2;
-        // $display("Passing a2");
         let msg <- a2.get(0);
-        $display("Passing (4) %s", fshow(msg));
         m4.put(0, msg);
     endrule
 
     rule pass_m4;
-        //$display("Passing m4");
         let msg <- m4.get(0);
-        $display("Passing (5) %s", fshow(msg));
         m3.put(1, msg);
     endrule
 
     rule pass_m3;
-        //  $display("Passing m3");
         let msg <- m3.get(0);
-        $display("Passing (6) %s", fshow(msg));
         p5.put(0, msg);
     endrule
 
     rule pass_p5;
-        // $display("Passing p5");
         let msg <- p5.get(0);
-        $display("Passing (7) %s", fshow(msg));
         m6.put(0, msg);
     endrule
 
     rule pass_m6;
-        // $display("Passing m6");
         let msg <- m6.get(0);
-        $display("Passing (8) %s", fshow(msg));
         a7.put(0, msg);
     endrule
 

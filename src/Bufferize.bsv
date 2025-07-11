@@ -2,9 +2,10 @@ import Vector::*;
 import FIFO::*;
 import FIFOF::*;
 import Types::*;
+import Operation::*;
 
-typedef 4 NUM_ENTRIES;
-typedef 2 SIZE_PER_ENTRY;
+typedef 2 NUM_ENTRIES;
+typedef TMul#(TILE_SIZE, TILE_SIZE) SIZE_PER_ENTRY;
 
 interface Bufferize;
     method Action put_data(ChannelMessage msg);
@@ -31,9 +32,7 @@ module mkSimpleBufferize#(Int#(32) rank) (Bufferize);
     Reg#(Int#(32)) read_ptr <- mkReg(0);
 
     (* descending_urgency = "deallocate_storage, store" *)
-    (* preempts = "store, store_debug" *)
     rule store if (free[write_ptr] == True &&& input_fifo.first matches tagged Tag_Data { .data, .st });
-        // $display("storing data: %s", fshow(data));
         input_fifo.deq;
         buffer[write_ptr][write_subptr] <= tagged Valid (tuple2(data, st));
         if (st >= rank) begin 
@@ -44,23 +43,6 @@ module mkSimpleBufferize#(Int#(32) rank) (Bufferize);
         end else begin 
             write_subptr <= write_subptr + 1;
         end 
-    endrule
-
-    rule store_debug;
-    /*
-        $display("buffer: %s", fshow(buffer));
-        $display("free: %s", fshow(free[write_ptr]));
-        $display("input_fifo not full: %s", fshow(input_fifo.notFull));
-        $display("input fifo first: %s", fshow(input_fifo.first));
-        $display("input_fifo not empty: %s", fshow(input_fifo.notEmpty));
-        $display("output_fifo: %s", fshow(output_fifo.notFull));
-        $display("token_request_fifo: %s", fshow(token_request_fifo.notFull));
-        $display("token_output_fifo: %s", fshow(token_output_fifo.notFull));
-        $display("token_output_stage: %s", fshow(token_output_stage.notFull));
-        $display("write_ptr: %d", write_ptr);
-        $display("write_subptr: %d", write_subptr);
-        $display("read_ptr: %d", read_ptr);
-        */
     endrule
 
     rule send_token; // We send the token + a deallocate request.
@@ -96,7 +78,6 @@ module mkSimpleBufferize#(Int#(32) rank) (Bufferize);
     endrule
 
     rule deallocate_storage if (token_request_fifo.first matches tagged Tag_Deallocate_Storage { .ptr });
-        // $display("deallocating storage: %d", ptr);
         free[ptr] <= True;
         token_request_fifo.deq;
         read_ptr <= 0; // This is kind of redundant but i thought it would not hurt.
@@ -125,21 +106,29 @@ endmodule
 
 module mkBufferize(Empty);
     let dut <- mkSimpleBufferize(1);
+    let rpt <- mkRepeatStatic(10);
 
-    rule push;
-        let data = tagged Tag_Data (tuple2(Tag_Tile (replicate(replicate(1))), 1));
+    let state <- mkReg(0);
+
+    rule push if (state == 0);
+        let data = tagged Tag_Data (tuple2(Tag_Tile (replicate(replicate(state))), 1));
         dut.put_data(data);
+        state <= state + 1;
     endrule
 
-    rule loop_data;
+    rule token_output_to_repeat_input;
         let data <- dut.get_token();
+        rpt.put(0, data);
+    endrule
+
+    rule repeat_output_to_bufferize_input;
+        let data <- rpt.get(0);
         dut.request_token(data);
     endrule
 
     rule drain_result;
         let data <- dut.get_data();
-        $display("data: %s", fshow(data));
-        // $finish(0);
+        $finish(0);
     endrule
 
 endmodule

@@ -4,7 +4,7 @@ import Parameters::*;
 import Vector::*;
 
 typedef Int#(32) StopToken;
-typedef 2 TILE_SIZE;
+typedef 4 TILE_SIZE;
 typedef Vector#(TILE_SIZE, Vector#(TILE_SIZE, Scalar)) Tile;
 
 /*
