@@ -156,6 +156,7 @@ typedef struct {
 
 typedef union tagged {
     Tuple2#(Data, StopToken) Tag_Data;
+    Ref Tag_Deallocate_Storage;
     Instruction_Ptr Tag_Instruction;
     EndToken Tag_EndToken;
 } ChannelMessage deriving (Bits, FShow);
