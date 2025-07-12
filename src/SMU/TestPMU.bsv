@@ -41,24 +41,28 @@ module mkTestPMU();
         mat[1][1] = fromInteger(4*i + 3);
         testValues[i] = TaggedTile { t: mat, st: fromInteger(100 + i) };
     end
-
     // === State tracking ===
     Reg#(Bit#(TLog#(TAdd#(NUM_TEST_VALUES, 1)))) putIndex <- mkReg(0);
     Reg#(Bit#(TLog#(TAdd#(NUM_TEST_VALUES, 1)))) getIndex <- mkReg(0);
     Reg#(Bit#(TLog#(TAdd#(NUM_TEST_VALUES, 1)))) valIndex <- mkReg(0);
     Vector#(NUM_TEST_VALUES, Reg#(Int#(32))) tokens <- replicateM(mkReg(0));
-    Reg#(Bool) testDone <- mkReg(False);
 
     // === Put values ===
-    rule putValue(!testDone && putIndex < fromInteger(valueOf(NUM_TEST_VALUES)));
+    rule putValue(putIndex < fromInteger(valueOf(NUM_TEST_VALUES)));
         data_in.enq(tagged Tag_Data tuple2(tagged Tag_Tile testValues[putIndex].t, testValues[putIndex].st));
         $display("Test: Putting value");
         printTile(testValues[putIndex]);
         putIndex <= putIndex + 1;
     endrule
 
+    rule putEndToken(putIndex == fromInteger(valueOf(NUM_TEST_VALUES)));
+        data_in.enq(tagged Tag_EndToken 0);
+        putIndex <= putIndex + 1;
+        $display("Test: Putting end token");
+    endrule
+
     // === Handle token output ===
-    rule handleToken(!testDone);
+    rule handleToken;
         let token = token_out.first;
         token_out.deq;
         case (token) matches
@@ -66,6 +70,7 @@ module mkTestPMU();
                 case (d) matches
                     tagged Tag_Scalar .s: begin
                         tokens[getIndex] <= s;
+                        getIndex <= getIndex + 1;
                         $display("Test: Got token %d for value", s);
                         printTile(testValues[getIndex]);
 
@@ -77,6 +82,10 @@ module mkTestPMU();
                     end
                 endcase
             end
+            tagged Tag_EndToken .et: begin
+                $display("Test: End token received in token out");
+                token_in.enq(tagged Tag_EndToken 0);
+            end
             default: begin
                 $display("Expected Tag_Data in token_out");
                 $finish(0);
@@ -85,7 +94,7 @@ module mkTestPMU();
     endrule
 
     // === Handle returned value ===
-    rule handleValue(!testDone);
+    rule handleValue;
         let value = data_out.first;
         data_out.deq;
 
@@ -99,7 +108,11 @@ module mkTestPMU();
                         valIndex <= valIndex + 1;
 
                         if (TaggedTile { t: t, st: st } == expected) begin
-                            $display("Test PASSED: Token %d", token);
+                            $display("FAILED: Token %d", token);
+                            $display("Returned [st = %0d]:", st);
+                            printTile(TaggedTile { t: t, st: st });
+                            $display("Expected [st = %0d]:", expected.st);
+                            printTile(expected);
                         end else begin
                             $display("FAILED: Token %d", token);
                             $display("Returned [st = %0d]:", st);
@@ -107,18 +120,17 @@ module mkTestPMU();
                             $display("Expected [st = %0d]:", expected.st);
                             printTile(expected);
                         end
-
-                        if (valIndex + 1 == fromInteger(valueOf(NUM_TEST_VALUES))) begin
-                            testDone <= True;
-                            $display("All tests completed");
-                            $finish(0);
-                        end
                     end
                     default: begin
                         $display("Expected tile, got something else");
                         $finish(0);
                     end
                 endcase
+            end
+            tagged Tag_EndToken .et: begin
+                $display("Test: End token received");
+                $display("All tests completed");
+                $finish(0);
             end
             default: begin
                 $display("Expected Tag_Data in data_out");

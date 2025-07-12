@@ -19,7 +19,6 @@ module mkSetUsageTracker(SetUsageTracker_IFC);
         let count = usage.sub(s);
         let new_count = count + 1;
         usage.upd(s, new_count);
-        $display("SetUsageTracker: Incrementing frame for set %d, count %d, new count %d, FRAMES_PER_SET %d", s, count, new_count, fromInteger(valueOf(FRAMES_PER_SET)));
         return count + 1 == fromInteger(valueOf(FRAMES_PER_SET));
     endmethod
 

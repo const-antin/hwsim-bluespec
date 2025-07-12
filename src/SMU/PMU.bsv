@@ -78,7 +78,6 @@ module mkPMU#(
 
                         token_out.enq(tagged Tag_Data tuple2(tagged Tag_Scalar token, st));
                         curr_loc <= new_loc;
-                        $display("[STORE] curr_loc set = %0d, (frame + 1) = %0d, valid = %0d", new_loc.set, new_loc.frame, new_loc.valid);
                     end
                     tagged Tag_Ref .r: begin
                         $display("Reference received");
@@ -95,8 +94,8 @@ module mkPMU#(
                 $finish(0);
             end
             tagged Tag_EndToken .et: begin
-                $display("End token received");
-                $finish(0);
+                token_out.enq(tagged Tag_EndToken et);
+                $display("End token received in store");
             end
         endcase
     endrule
@@ -125,6 +124,10 @@ module mkPMU#(
                         $finish(0);
                     end
                 endcase
+            end
+            tagged Tag_EndToken .et: begin
+                data_out.enq(tagged Tag_EndToken et);
+                $display("End token received");
             end
             default: begin
                 $display("Expected data message with token");
