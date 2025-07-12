@@ -24,10 +24,10 @@ endfunction
 (* synthesize *)
 module mkTestPMU();
     // Create the four FIFOs that connect to the PMU
-    FIFO#(TaggedTile) data_in <- mkFIFO;
-    FIFO#(Int#(32)) token_out <- mkFIFO;
-    FIFO#(Int#(32)) token_in <- mkFIFO;
-    FIFO#(TaggedTile) data_out <- mkFIFO;
+    FIFO#(ChannelMessage) data_in <- mkFIFO;
+    FIFO#(ChannelMessage) token_out <- mkFIFO;
+    FIFO#(ChannelMessage) token_in <- mkFIFO;
+    FIFO#(ChannelMessage) data_out <- mkFIFO;
     
     PMU_IFC pmu <- mkPMU(data_in, token_out, token_in, data_out);
 
@@ -51,7 +51,7 @@ module mkTestPMU();
 
     // === Put values ===
     rule putValue(!testDone && putIndex < fromInteger(valueOf(NUM_TEST_VALUES)));
-        data_in.enq(testValues[putIndex]);
+        data_in.enq(tagged Tag_Data tuple2(tagged Tag_Tile testValues[putIndex].t, testValues[putIndex].st));
         $display("Test: Putting value");
         printTile(testValues[putIndex]);
         putIndex <= putIndex + 1;
@@ -61,13 +61,27 @@ module mkTestPMU();
     rule handleToken(!testDone);
         let token = token_out.first;
         token_out.deq;
-        tokens[getIndex] <= token;
-        $display("Test: Got token %d for value", token);
-        printTile(testValues[getIndex]);
-        getIndex <= getIndex + 1;
+        case (token) matches
+            tagged Tag_Data {.d, .st}: begin
+                case (d) matches
+                    tagged Tag_Scalar .s: begin
+                        tokens[getIndex] <= s;
+                        $display("Test: Got token %d for value", s);
+                        printTile(testValues[getIndex]);
 
-        token_in.enq(token);
-        $display("Test: Requesting value for token %d", token);
+                        token_in.enq(tagged Tag_Data tuple2(tagged Tag_Scalar s, st));
+                    end
+                    default: begin
+                        $display("Expected scalar token, got something else");
+                        $finish(0);
+                    end
+                endcase
+            end
+            default: begin
+                $display("Expected Tag_Data in token_out");
+                $finish(0);
+            end
+        endcase
     endrule
 
     // === Handle returned value ===
@@ -75,25 +89,42 @@ module mkTestPMU();
         let value = data_out.first;
         data_out.deq;
 
-        let idx = valIndex;
-        let token = tokens[idx];
-        let expected = testValues[idx];
-        valIndex <= valIndex + 1;
+        case (value) matches
+            tagged Tag_Data {.d, .st}: begin
+                case (d) matches
+                    tagged Tag_Tile .t: begin
+                        let idx = valIndex;
+                        let token = tokens[idx];
+                        let expected = testValues[idx];
+                        valIndex <= valIndex + 1;
 
-        if (value == expected) begin
-            $display("Test PASSED: Token %d", token);
-        end else begin
-            $display("FAILED: Returned [st = %0d]:", value.st);
-            printTile(value);
-            $display("Expected [st = %0d]:", expected.st);
-            printTile(expected);
-        end
+                        if (TaggedTile { t: t, st: st } == expected) begin
+                            $display("Test PASSED: Token %d", token);
+                        end else begin
+                            $display("FAILED: Token %d", token);
+                            $display("Returned [st = %0d]:", st);
+                            printTile(TaggedTile { t: t, st: st });
+                            $display("Expected [st = %0d]:", expected.st);
+                            printTile(expected);
+                        end
 
-        if (valIndex + 1 == fromInteger(valueOf(NUM_TEST_VALUES))) begin
-            testDone <= True;
-            $display("All tests completed");
-            $finish(0);
-        end
+                        if (valIndex + 1 == fromInteger(valueOf(NUM_TEST_VALUES))) begin
+                            testDone <= True;
+                            $display("All tests completed");
+                            $finish(0);
+                        end
+                    end
+                    default: begin
+                        $display("Expected tile, got something else");
+                        $finish(0);
+                    end
+                endcase
+            end
+            default: begin
+                $display("Expected Tag_Data in data_out");
+                $finish(0);
+            end
+        endcase
     endrule
 
 endmodule
