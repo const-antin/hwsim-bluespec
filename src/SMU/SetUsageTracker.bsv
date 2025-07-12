@@ -12,8 +12,7 @@ interface SetUsageTracker_IFC;
 endinterface
 
 module mkSetUsageTracker(SetUsageTracker_IFC);
-    RegFile#(SETS_LOG, UInt#(32)) usage <- mkRegFile(0, fromInteger(valueOf(SETS) - 1));
-
+    RegFile#(SETS_LOG, UInt#(32)) usage <- mkRegFileFull;
 
     method ActionValue#(Bool) incFrame(SETS_LOG s);
         let count = usage.sub(s);

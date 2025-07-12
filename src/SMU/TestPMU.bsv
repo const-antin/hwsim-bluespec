@@ -6,7 +6,7 @@ import Vector::*;
 import FIFO::*;
 import Parameters::*;
 
-typedef 3 NUM_TEST_VALUES;
+typedef 7 NUM_TEST_VALUES;
 
 // Function to print a tile matrix
 function Action printTile(TaggedTile tile);
@@ -42,23 +42,23 @@ module mkTestPMU();
         testValues[i] = TaggedTile { t: mat, st: fromInteger(100 + i) };
     end
     // === State tracking ===
-    Reg#(Bit#(TLog#(TAdd#(NUM_TEST_VALUES, 1)))) putIndex <- mkReg(0);
-    Reg#(Bit#(TLog#(TAdd#(NUM_TEST_VALUES, 1)))) getIndex <- mkReg(0);
-    Reg#(Bit#(TLog#(TAdd#(NUM_TEST_VALUES, 1)))) valIndex <- mkReg(0);
+    Reg#(Bit#(TLog#(TAdd#(NUM_TEST_VALUES, 2)))) putIndex <- mkReg(0);
+    Reg#(Bit#(TLog#(TAdd#(NUM_TEST_VALUES, 2)))) getIndex <- mkReg(0);
+    Reg#(Bit#(TLog#(TAdd#(NUM_TEST_VALUES, 2)))) valIndex <- mkReg(0);
     Vector#(NUM_TEST_VALUES, Reg#(Int#(32))) tokens <- replicateM(mkReg(0));
 
     // === Put values ===
-    rule putValue(putIndex < fromInteger(valueOf(NUM_TEST_VALUES)));
-        data_in.enq(tagged Tag_Data tuple2(tagged Tag_Tile testValues[putIndex].t, testValues[putIndex].st));
-        $display("Test: Putting value");
-        printTile(testValues[putIndex]);
-        putIndex <= putIndex + 1;
-    endrule
-
-    rule putEndToken(putIndex == fromInteger(valueOf(NUM_TEST_VALUES)));
-        data_in.enq(tagged Tag_EndToken 0);
-        putIndex <= putIndex + 1;
-        $display("Test: Putting end token");
+    rule driveInput;
+        if (putIndex < fromInteger(valueOf(NUM_TEST_VALUES))) begin 
+            data_in.enq(tagged Tag_Data tuple2(tagged Tag_Tile testValues[putIndex].t, testValues[putIndex].st));
+            $display("Test: Putting value");
+            printTile(testValues[putIndex]);
+            putIndex <= putIndex + 1;
+        end else if (putIndex == fromInteger(valueOf(NUM_TEST_VALUES))) begin
+            data_in.enq(tagged Tag_EndToken 0);
+            putIndex <= putIndex + 1;
+            $display("Test: Putting end token");
+        end
     endrule
 
     // === Handle token output ===
@@ -70,10 +70,10 @@ module mkTestPMU();
                 case (d) matches
                     tagged Tag_Scalar .s: begin
                         tokens[getIndex] <= s;
-                        getIndex <= getIndex + 1;
                         $display("Test: Got token %d for value", s);
                         printTile(testValues[getIndex]);
 
+                        getIndex <= getIndex + 1;
                         token_in.enq(tagged Tag_Data tuple2(tagged Tag_Scalar s, st));
                     end
                     default: begin
@@ -108,7 +108,7 @@ module mkTestPMU();
                         valIndex <= valIndex + 1;
 
                         if (TaggedTile { t: t, st: st } == expected) begin
-                            $display("FAILED: Token %d", token);
+                            $display("PASSED: Token %d", token);
                             $display("Returned [st = %0d]:", st);
                             printTile(TaggedTile { t: t, st: st });
                             $display("Expected [st = %0d]:", expected.st);
@@ -119,6 +119,7 @@ module mkTestPMU();
                             printTile(TaggedTile { t: t, st: st });
                             $display("Expected [st = %0d]:", expected.st);
                             printTile(expected);
+                            $finish(0); // Exits on failure
                         end
                     end
                     default: begin
