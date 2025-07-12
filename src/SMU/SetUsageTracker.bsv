@@ -4,42 +4,37 @@ import RegFile::*;
 import Types::*;
 import Parameters::*;
 
-// Type aliases
-typedef Bit#(TLog#(SETS)) SetIdx;
-typedef Bit#(TLog#(TAdd#(FRAMES_PER_SET, 1))) FrameCount;
-
 interface SetUsageTracker_IFC;
-    method Action incFrame(SetIdx s);
-    method Action decFrame(SetIdx s);
-    method Bool isFull(SetIdx s);
-    method Bool isEmpty(SetIdx s);
-    method FrameCount getCount(SetIdx s);
+    method ActionValue#(Bool) incFrame(SETS_LOG s); // returns True if the set is full after incrementing
+    method ActionValue#(Bool) decFrame(SETS_LOG s); // returns True if the set is empty after decrementing  
+    method Action setFrame(SETS_LOG s, UInt#(32) count);
+    method UInt#(32) getCount(SETS_LOG s);
 endinterface
 
 module mkSetUsageTracker(SetUsageTracker_IFC);
-    RegFile#(SetIdx, FrameCount) usage <- mkRegFileFull;
+    RegFile#(SETS_LOG, UInt#(32)) usage <- mkRegFile(0, fromInteger(valueOf(SETS) - 1));
 
-    method Action incFrame(SetIdx s);
+
+    method ActionValue#(Bool) incFrame(SETS_LOG s);
         let count = usage.sub(s);
-        if (count < fromInteger(valueOf(FRAMES_PER_SET)))
-            usage.upd(s, count + 1);
+        let new_count = count + 1;
+        usage.upd(s, new_count);
+        $display("SetUsageTracker: Incrementing frame for set %d, count %d, new count %d, FRAMES_PER_SET %d", s, count, new_count, fromInteger(valueOf(FRAMES_PER_SET)));
+        return count + 1 == fromInteger(valueOf(FRAMES_PER_SET));
     endmethod
 
-    method Action decFrame(SetIdx s);
+    method ActionValue#(Bool) decFrame(SETS_LOG s);
         let count = usage.sub(s);
         if (count > 0)
             usage.upd(s, count - 1);
+        return count - 1 == 0;
     endmethod
 
-    method Bool isFull(SetIdx s);
-        return usage.sub(s) == fromInteger(valueOf(FRAMES_PER_SET));
+    method Action setFrame(SETS_LOG s, UInt#(32) count);
+        usage.upd(s, count);
     endmethod
 
-    method Bool isEmpty(SetIdx s);
-        return usage.sub(s) == 0;
-    endmethod
-
-    method FrameCount getCount(SetIdx s);
+    method UInt#(32) getCount(SETS_LOG s);
         return usage.sub(s);
     endmethod
 

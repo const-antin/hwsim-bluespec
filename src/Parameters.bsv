@@ -14,7 +14,9 @@ typedef 4 NUM_STAGES;
 
 typedef Int#(32) Scalar;
 
-typedef 8 FRAMES_PER_SET;
-typedef 128 SETS;
+typedef 4 FRAMES_PER_SET;
+typedef Bit#(TLog#(FRAMES_PER_SET)) FRAMES_PER_SET_LOG;
+typedef 2 SETS;
+typedef Bit#(TLog#(SETS)) SETS_LOG;
 
 endpackage

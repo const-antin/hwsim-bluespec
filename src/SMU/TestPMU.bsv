@@ -6,6 +6,21 @@ import Vector::*;
 import FIFO::*;
 import Parameters::*;
 
+typedef 8 NUM_TEST_VALUES;
+
+// Function to print a tile matrix
+function Action printTile(TaggedTile tile);
+    return action
+        for (Integer i = 0; i < valueOf(TILE_SIZE); i = i + 1) begin
+            $write("  ");
+            for (Integer j = 0; j < valueOf(TILE_SIZE); j = j + 1) begin
+                $write("%0d ", tile.t[i][j]);
+            end
+            $write("\n");
+        end
+    endaction;
+endfunction
+
 (* synthesize *)
 module mkTestPMU();
     // Create the four FIFOs that connect to the PMU
@@ -15,75 +30,66 @@ module mkTestPMU();
     FIFO#(TaggedTile) data_out <- mkFIFO;
     
     PMU_IFC pmu <- mkPMU(data_in, token_out, token_in, data_out);
-    
-    Vector#(4, TaggedTile) testValues;
-    Vector#(TILE_SIZE, Vector#(TILE_SIZE, Scalar)) mat1 = replicate(replicate(0));
-    Vector#(TILE_SIZE, Vector#(TILE_SIZE, Scalar)) mat2 = replicate(replicate(0));
-    Vector#(TILE_SIZE, Vector#(TILE_SIZE, Scalar)) mat3 = replicate(replicate(0));
-    Vector#(TILE_SIZE, Vector#(TILE_SIZE, Scalar)) mat4 = replicate(replicate(0));
 
-    mat1[0][0] = 1; mat1[0][1] = 2;
-    mat1[1][0] = 3; mat1[1][1] = 4;
-    
-    mat2[0][0] = 5; mat2[0][1] = 6;
-    mat2[1][0] = 7; mat2[1][1] = 8;
-    
-    mat3[0][0] = 9; mat3[0][1] = 10;
-    mat3[1][0] = 11; mat3[1][1] = 12;
-    
-    mat4[0][0] = 13; mat4[0][1] = 14;
-    mat4[1][0] = 15; mat4[1][1] = 16;
-                   
-    testValues[0] = TaggedTile { t: mat1, st: 100 };
-    testValues[1] = TaggedTile { t: mat2, st: 101 };
-    testValues[2] = TaggedTile { t: mat3, st: 102 };
-    testValues[3] = TaggedTile { t: mat4, st: 103 };
-    
-    Reg#(Bit#(3)) putIndex <- mkReg(0);
-    Reg#(Bit#(3)) getIndex <- mkReg(0);
-    Reg#(Bit#(3)) valIndex <- mkReg(0);
-    Vector#(4, Reg#(Int#(32))) tokens <- replicateM(mkReg(0));
+    // === Dynamically create NUM_TEST_VALUES test matrices ===
+    Vector#(NUM_TEST_VALUES, TaggedTile) testValues;
+    for (Integer i = 0; i < valueOf(NUM_TEST_VALUES); i = i + 1) begin
+        Vector#(TILE_SIZE, Vector#(TILE_SIZE, Scalar)) mat = replicate(replicate(0));
+        mat[0][0] = fromInteger(4*i + 0);
+        mat[0][1] = fromInteger(4*i + 1);
+        mat[1][0] = fromInteger(4*i + 2);
+        mat[1][1] = fromInteger(4*i + 3);
+        testValues[i] = TaggedTile { t: mat, st: fromInteger(100 + i) };
+    end
+
+    // === State tracking ===
+    Reg#(Bit#(TLog#(TAdd#(NUM_TEST_VALUES, 1)))) putIndex <- mkReg(0);
+    Reg#(Bit#(TLog#(TAdd#(NUM_TEST_VALUES, 1)))) getIndex <- mkReg(0);
+    Reg#(Bit#(TLog#(TAdd#(NUM_TEST_VALUES, 1)))) valIndex <- mkReg(0);
+    Vector#(NUM_TEST_VALUES, Reg#(Int#(32))) tokens <- replicateM(mkReg(0));
     Reg#(Bool) testDone <- mkReg(False);
-    
-    // Put values one at a time
-    rule putValue(!testDone && putIndex < 4);
+
+    // === Put values ===
+    rule putValue(!testDone && putIndex < fromInteger(valueOf(NUM_TEST_VALUES)));
         data_in.enq(testValues[putIndex]);
-        $display("Test: Putting value %d", testValues[putIndex]);
+        $display("Test: Putting value");
+        printTile(testValues[putIndex]);
         putIndex <= putIndex + 1;
     endrule
-    
-    // Handle tokens whenever they appear
+
+    // === Handle token output ===
     rule handleToken(!testDone);
         let token = token_out.first;
         token_out.deq;
         tokens[getIndex] <= token;
-        $display("Test: Got token %d for value %d", token, testValues[getIndex]);
+        $display("Test: Got token %d for value", token);
+        printTile(testValues[getIndex]);
         getIndex <= getIndex + 1;
-        
-        // Request the value back immediately
+
         token_in.enq(token);
         $display("Test: Requesting value for token %d", token);
     endrule
-    
-    // Handle returned values whenever they appear
+
+    // === Handle returned value ===
     rule handleValue(!testDone);
         let value = data_out.first;
         data_out.deq;
-        // Find which token this was for (we can do this because we know the order)
+
         let idx = valIndex;
         let token = tokens[idx];
         let expected = testValues[idx];
         valIndex <= valIndex + 1;
-        
+
         if (value == expected) begin
-            $display("Test PASSED: Token %d -> Value %d (expected %d)", 
-                    token, value, expected);
+            $display("Test PASSED: Token %d", token);
         end else begin
-            $display("Test FAILED: Token %d -> Value %d (expected %d)", 
-                    token, value, expected);
+            $display("FAILED: Returned [st = %0d]:", value.st);
+            printTile(value);
+            $display("Expected [st = %0d]:", expected.st);
+            printTile(expected);
         end
-        
-        if (putIndex == 4 && idx == 3) begin
+
+        if (valIndex + 1 == fromInteger(valueOf(NUM_TEST_VALUES))) begin
             testDone <= True;
             $display("All tests completed");
             $finish(0);

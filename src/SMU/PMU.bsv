@@ -11,8 +11,8 @@ import SetUsageTracker::*;
 
 // Tracking the current storage location
 typedef struct {
-    SetIdx set;
-    FrameIdx frame;
+    SETS_LOG set;
+    FRAMES_PER_SET_LOG frame;
     Bool valid;
 } StorageLocation deriving(Bits, Eq);
 
@@ -21,6 +21,8 @@ typedef struct {
     TaggedTile value;
     Int#(32) token;
 } ValueToken deriving(Bits, Eq);
+
+typedef Bit#(TAdd#(TLog#(SETS), TLog#(FRAMES_PER_SET))) TokenBits;
 
 // Interface that just exposes the modules existence
 // (since all communication is through the FIFOs passed as parameters)
@@ -46,19 +48,17 @@ module mkPMU#(
         data_in.deq;
 
         StorageLocation new_loc = curr_loc;
-        Bit#(10) token_bits = 0;
         Int#(32) token = 0;
-        SetIdx set;
 
         if (!curr_loc.valid) begin
             let mset <- free_list.allocSet();
             case (mset) matches
-                tagged Valid .s: begin
-                    set = s;
+                tagged Valid .set: begin
                     mem.write(set, 0, tile);
-                    usage_tracker.incFrame(set);
+                    usage_tracker.setFrame(set, 1);
 
-                    token_bits = { pack(set), 3'b000 };
+                    FRAMES_PER_SET_LOG zero_frame = 0;
+                    token = zeroExtend(unpack({ pack(set), pack(zero_frame) }));
                     new_loc = StorageLocation { set: set, frame: 1, valid: True };
                 end
                 default: begin
@@ -67,14 +67,13 @@ module mkPMU#(
                 end
             endcase
         end else begin
-            set = curr_loc.set;
+            let set = curr_loc.set;
             let frame = curr_loc.frame;
 
             mem.write(set, frame, tile);
-            usage_tracker.incFrame(set);
+            let full <- usage_tracker.incFrame(set);
 
-            token_bits = { pack(set), pack(frame) };
-            let full = usage_tracker.isFull(set);
+            token = zeroExtend(unpack({ pack(set), pack(frame) }));
             new_loc = StorageLocation {
                 set: set,
                 frame: frame + 1,
@@ -82,9 +81,9 @@ module mkPMU#(
             };
         end
 
-        token = signExtend(unpack(token_bits));
         token_out.enq(token);
         curr_loc <= new_loc;
+        $display("[STORE] curr_loc set = %0d, (frame + 1) = %0d, valid = %0d", new_loc.set, new_loc.frame, new_loc.valid);
     endrule
 
 
@@ -94,8 +93,10 @@ module mkPMU#(
         token_in.deq;
         
         let token_bits = pack(token);        // Int#(32) -> Bit#(32)
-        SetIdx   set   = truncateLSB(token_bits); // token_bits[9:3]
-        FrameIdx frame = truncate(token_bits);    // token_bits[2:0]
+        let frame_width = valueOf(TLog#(FRAMES_PER_SET));
+        let set_width = valueOf(TLog#(SETS));
+        SETS_LOG set = token_bits[frame_width + set_width - 1 : frame_width];
+        FRAMES_PER_SET_LOG frame = token_bits[frame_width - 1 : 0];
 
         let tile = mem.read(set, frame);
         data_out.enq(tile);
