@@ -126,6 +126,15 @@ module mkPMU#(
                 endcase
             end
             tagged Tag_EndToken .et: begin
+                // Print the state of the memory being used
+                for (Integer i = 0; i < valueOf(SETS); i = i + 1) begin
+                    // Check if set is valid
+                    if (!free_list.isSetFree(fromInteger(i))) begin
+                        $display("[MEMORY USAGE]: Set %d: %d frames used", i, usage_tracker.getCount(fromInteger(i)));
+                    end else begin
+                        $display("[MEMORY USAGE]: Set %d: No frames used", i);
+                    end
+                end
                 data_out.enq(tagged Tag_EndToken et);
                 $display("End token received");
             end

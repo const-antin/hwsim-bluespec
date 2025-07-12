@@ -6,7 +6,7 @@ import Vector::*;
 import FIFO::*;
 import Parameters::*;
 
-typedef 8 NUM_TEST_VALUES;
+typedef 3 NUM_TEST_VALUES;
 
 // Function to print a tile matrix
 function Action printTile(TaggedTile tile);

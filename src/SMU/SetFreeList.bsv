@@ -7,6 +7,7 @@ import Parameters::*;
 interface SetFreeList_IFC;
     method ActionValue#(Maybe#(SETS_LOG)) allocSet();
     method Action freeSet(SETS_LOG s);
+    method Bool isSetFree(SETS_LOG s);
 endinterface
 
 module mkSetFreeList(SetFreeList_IFC);
@@ -32,6 +33,10 @@ module mkSetFreeList(SetFreeList_IFC);
 
     method Action freeSet(SETS_LOG s);
         free_sets <= free_sets & ~(1 << pack(s));  // Clear the bit to mark as free
+    endmethod
+
+    method Bool isSetFree(SETS_LOG s);
+        return free_sets[pack(s)] == 0;
     endmethod
 
 endmodule
