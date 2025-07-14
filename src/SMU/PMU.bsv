@@ -1,3 +1,5 @@
+// Currently we access the set / frame by using [0000,SetBit,FrameBit] as a single value
+
 package PMU;
 
 import FIFO::*;
@@ -16,6 +18,11 @@ typedef struct {
     Bool valid;
 } StorageLocation deriving(Bits, Eq);
 
+typedef struct {
+  Vector#(MAX_ENTRIES, StorageLocation) vec;
+  UInt#(TLog#(MAX_ENTRIES)) next_idx;
+} TokenMapping deriving (Bits, Eq);
+
 // Interface that just exposes the modules existence
 interface PMU_IFC;
 endinterface
@@ -25,7 +32,8 @@ module mkPMU#(
     FIFO#(ChannelMessage) data_in,      // Values come in here
     FIFO#(ChannelMessage) token_out,    // Generated tokens go out here
     FIFO#(ChannelMessage) token_in,     // Tokens come back in here
-    FIFO#(ChannelMessage) data_out      // Retrieved values go out here
+    FIFO#(ChannelMessage) data_out,     // Retrieved values go out here
+    Int#(32) rank_in                    // Rank of the current tile
 )(PMU_IFC);
     
     // Only internal state needed is the storage FIFO and token counter
@@ -33,8 +41,30 @@ module mkPMU#(
     SetFreeList_IFC free_list <- mkSetFreeList;
     SetUsageTracker_IFC usage_tracker <- mkSetUsageTracker;
     Reg#(StorageLocation) curr_loc <- mkReg(StorageLocation { set: 0, frame: 0, valid: False });
+    Reg#(Int#(32)) rank <- mkReg(rank_in);
+    Reg#(Scalar) token_counter <- mkReg(0);
+    RegFile#(Scalar, TokenMapping) token_table <- mkRegFile(0, fromInteger(valueOf(MAX_ENTRIES) - 1));
+    let frame_width = valueOf(TLog#(FRAMES_PER_SET));
+    let set_width = valueOf(TLog#(SETS));
+    Reg#(Maybe#(Scalar)) load_token <- mkReg(tagged Invalid);
+    Reg#(UInt#(TLog#(MAX_ENTRIES))) load_idx <- mkReg(0);
+    
+    Reg#(Bool) token_table_initialized <- mkReg(False);
+    Reg#(Scalar) init_counter <- mkReg(0);
+    rule init_token_table (!token_table_initialized);
+        TokenMapping tm;
+        tm.vec = replicate(StorageLocation { set: 0, frame: 0, valid: False });
+        tm.next_idx = 0;
+        token_table.upd(init_counter, tm);
 
-    rule store_tile;
+        if (init_counter == fromInteger(valueOf(MAX_ENTRIES) - 1)) begin
+            token_table_initialized <= True;
+        end else begin
+            init_counter <= init_counter + 1;
+        end
+    endrule
+
+    rule store_tile (token_table_initialized);
         let d_in = data_in.first;
         data_in.deq;
 
@@ -42,8 +72,15 @@ module mkPMU#(
             tagged Tag_Data {.tt, .st}: begin
                 case (tt) matches
                     tagged Tag_Tile .tile: begin
+                        let new_st = st;
+                        let emit_token = False;
+                        if (st >= rank) begin
+                            new_st = st - rank;
+                            emit_token = True;
+                        end
+
                         StorageLocation new_loc = curr_loc;
-                        Int#(32) token = 0;
+                        StorageLocation storage_location = curr_loc;
 
                         if (!curr_loc.valid) begin
                             let mset <- free_list.allocSet();
@@ -53,7 +90,7 @@ module mkPMU#(
                                     usage_tracker.setFrame(set, 1);
 
                                     FRAMES_PER_SET_LOG zero_frame = 0;
-                                    token = zeroExtend(unpack({ pack(set), pack(zero_frame) }));
+                                    storage_location = StorageLocation { set: set, frame: 0, valid: True };
                                     new_loc = StorageLocation { set: set, frame: 1, valid: True };
                                 end
                                 default: begin
@@ -64,11 +101,11 @@ module mkPMU#(
                         end else begin
                             let set = curr_loc.set;
                             let frame = curr_loc.frame;
+                            storage_location = curr_loc;
 
                             mem.write(set, frame, TaggedTile { t: tile, st: st });
                             let full <- usage_tracker.incFrame(set);
 
-                            token = zeroExtend(unpack({ pack(set), pack(frame) }));
                             new_loc = StorageLocation {
                                 set: set,
                                 frame: frame + 1,
@@ -76,21 +113,30 @@ module mkPMU#(
                             };
                         end
 
-                        token_out.enq(tagged Tag_Data tuple2(tagged Tag_Scalar token, st));
+                        let tm = token_table.sub(token_counter);
+                        tm.vec[tm.next_idx] = storage_location;
+                        tm.next_idx = tm.next_idx + 1;
+                        token_table.upd(token_counter, tm);
+
+                        if (emit_token) begin
+                            let token_to_emit = token_counter;
+                            token_counter <= token_counter + 1;
+                            token_out.enq(tagged Tag_Data tuple2(tagged Tag_Scalar token_to_emit, new_st));
+                        end
                         curr_loc <= new_loc;
                     end
                     tagged Tag_Ref .r: begin
-                        $display("Reference received");
+                        $display("[ERROR]: Reference received in data input");
                         $finish(0);
                     end
                     tagged Tag_Scalar .scalar: begin
-                        $display("Scalar received");
+                        $display("[ERROR]: Scalar received in data input");
                         $finish(0);
                     end
                 endcase
             end
             tagged Tag_Instruction .ip: begin
-                $display("Instruction received"); // TODO: Should be able to accept incoming config
+                $display("[ERROR]: Instruction received in data input"); // TODO: Should be able to accept incoming config
                 $finish(0);
             end
             tagged Tag_EndToken .et: begin
@@ -101,26 +147,19 @@ module mkPMU#(
     endrule
 
     // Rule to handle token retrievals: find matching value and return it
-    rule load_tile;
+    rule start_load_tile (load_token == tagged Invalid);
         let token_msg = token_in.first;
         token_in.deq;
         
         case (token_msg) matches
             tagged Tag_Data {.tt, .st}: begin
                 case (tt) matches
-                    tagged Tag_Scalar .token: begin
-                        let token_bits = pack(token);
-                        
-                        let frame_width = valueOf(TLog#(FRAMES_PER_SET));
-                        let set_width = valueOf(TLog#(SETS));
-                        SETS_LOG set = token_bits[frame_width + set_width - 1 : frame_width];
-                        FRAMES_PER_SET_LOG frame = token_bits[frame_width - 1 : 0];
-
-                        let tile = mem.read(set, frame);
-                        data_out.enq(tagged Tag_Data tuple2(tagged Tag_Tile tile.t, tile.st));
+                    tagged Tag_Scalar .token_input: begin
+                        load_token <= tagged Valid token_input;
+                        load_idx <= 0;
                     end
                     default: begin
-                        $display("Expected scalar token");
+                        $display("[ERROR]: Expected scalar token");
                         $finish(0);
                     end
                 endcase
@@ -139,10 +178,28 @@ module mkPMU#(
                 $display("End token received");
             end
             default: begin
-                $display("Expected data message with token");
+                $display("[ERROR]: Expected data message with token");
                 $finish(0);
             end
         endcase
+    endrule
+
+    rule continue_load_tile (isValid(load_token));
+        $display("[DEBUG]: Continuing load tile %d", fromMaybe(0, load_token));
+        let tm = token_table.sub(fromMaybe(0, load_token));
+        if (load_idx < tm.next_idx) begin
+            let loc = tm.vec[load_idx];
+            let set = loc.set;
+            let frame = loc.frame;
+            let tile = mem.read(set, frame);
+            data_out.enq(tagged Tag_Data tuple2(tagged Tag_Tile tile.t, tile.st));
+            if (load_idx == tm.next_idx - 1) begin
+                load_token <= tagged Invalid;
+                load_idx <= 0;
+            end else begin
+                load_idx <= load_idx + 1;
+            end
+        end
     endrule
 
 endmodule

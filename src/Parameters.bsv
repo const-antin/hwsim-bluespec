@@ -18,5 +18,6 @@ typedef 4 FRAMES_PER_SET;
 typedef Bit#(TLog#(FRAMES_PER_SET)) FRAMES_PER_SET_LOG;
 typedef 2 SETS;
 typedef Bit#(TLog#(SETS)) SETS_LOG;
+typedef TMul#(FRAMES_PER_SET, SETS) MAX_ENTRIES;
 
 endpackage

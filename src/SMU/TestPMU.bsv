@@ -7,6 +7,7 @@ import FIFO::*;
 import Parameters::*;
 
 typedef 7 NUM_TEST_VALUES;
+typedef 1 RANK;
 
 // Function to print a tile matrix
 function Action printTile(TaggedTile tile);
@@ -18,6 +19,7 @@ function Action printTile(TaggedTile tile);
             end
             $write("\n");
         end
+        $write("  st: %0d\n", tile.st);
     endaction;
 endfunction
 
@@ -29,7 +31,7 @@ module mkTestPMU();
     FIFO#(ChannelMessage) token_in <- mkFIFO;
     FIFO#(ChannelMessage) data_out <- mkFIFO;
     
-    PMU_IFC pmu <- mkPMU(data_in, token_out, token_in, data_out);
+    PMU_IFC pmu <- mkPMU(data_in, token_out, token_in, data_out, fromInteger(valueOf(RANK)));
 
     // === Dynamically create NUM_TEST_VALUES test matrices ===
     Vector#(NUM_TEST_VALUES, TaggedTile) testValues;
@@ -39,8 +41,11 @@ module mkTestPMU();
         mat[0][1] = fromInteger(4*i + 1);
         mat[1][0] = fromInteger(4*i + 2);
         mat[1][1] = fromInteger(4*i + 3);
-        testValues[i] = TaggedTile { t: mat, st: fromInteger(100 + i) };
+        testValues[i] = TaggedTile { t: mat, st: fromInteger(0) };                
     end
+    testValues[2].st = fromInteger(1);
+    testValues[6].st = fromInteger(2);
+
     // === State tracking ===
     Reg#(Bit#(TLog#(TAdd#(NUM_TEST_VALUES, 2)))) putIndex <- mkReg(0);
     Reg#(Bit#(TLog#(TAdd#(NUM_TEST_VALUES, 2)))) getIndex <- mkReg(0);
@@ -51,13 +56,13 @@ module mkTestPMU();
     rule driveInput;
         if (putIndex < fromInteger(valueOf(NUM_TEST_VALUES))) begin 
             data_in.enq(tagged Tag_Data tuple2(tagged Tag_Tile testValues[putIndex].t, testValues[putIndex].st));
-            $display("Test: Putting value");
-            printTile(testValues[putIndex]);
+            // $display("Test: Putting value");
+            // printTile(testValues[putIndex]);
             putIndex <= putIndex + 1;
         end else if (putIndex == fromInteger(valueOf(NUM_TEST_VALUES))) begin
             data_in.enq(tagged Tag_EndToken 0);
             putIndex <= putIndex + 1;
-            $display("Test: Putting end token");
+            // $display("Test: Putting end token");
         end
     endrule
 
@@ -70,9 +75,7 @@ module mkTestPMU();
                 case (d) matches
                     tagged Tag_Scalar .s: begin
                         tokens[getIndex] <= s;
-                        $display("Test: Got token %d for value", s);
-                        printTile(testValues[getIndex]);
-
+                        $display("Test: Got token %d %d", s, st);
                         getIndex <= getIndex + 1;
                         token_in.enq(tagged Tag_Data tuple2(tagged Tag_Scalar s, st));
                     end
@@ -102,24 +105,20 @@ module mkTestPMU();
             tagged Tag_Data {.d, .st}: begin
                 case (d) matches
                     tagged Tag_Tile .t: begin
-                        let idx = valIndex;
-                        let token = tokens[idx];
-                        let expected = testValues[idx];
+                        let expected = testValues[valIndex];
                         valIndex <= valIndex + 1;
 
                         if (TaggedTile { t: t, st: st } == expected) begin
-                            $display("PASSED: Token %d", token);
-                            $display("Returned [st = %0d]:", st);
+                            $display("PASSED:");
                             printTile(TaggedTile { t: t, st: st });
                             $display("Expected [st = %0d]:", expected.st);
                             printTile(expected);
                         end else begin
-                            $display("FAILED: Token %d", token);
-                            $display("Returned [st = %0d]:", st);
+                            $display("FAILED:");
                             printTile(TaggedTile { t: t, st: st });
                             $display("Expected [st = %0d]:", expected.st);
                             printTile(expected);
-                            $finish(0); // Exits on failure
+                            // $finish(0); // Exits on failure
                         end
                     end
                     default: begin
