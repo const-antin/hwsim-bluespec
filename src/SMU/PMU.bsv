@@ -10,6 +10,7 @@ import BankedMemory::*;
 import Parameters::*;
 import SetFreeList::*;
 import SetUsageTracker::*;
+import Unwrap::*;
 
 // Tracking the current storage location
 typedef struct {
@@ -70,70 +71,59 @@ module mkPMU#(
 
         case (d_in) matches
             tagged Tag_Data {.tt, .st}: begin
-                case (tt) matches
-                    tagged Tag_Tile .tile: begin
-                        let new_st = st;
-                        let emit_token = False;
-                        if (st >= rank) begin
-                            new_st = st - rank;
-                            emit_token = True;
+                let tile = unwrapTile(tt);
+                let new_st = st;
+                let emit_token = False;
+                if (st >= rank) begin
+                    new_st = st - rank;
+                    emit_token = True;
+                end
+
+                StorageLocation new_loc = curr_loc;
+                StorageLocation storage_location = curr_loc;
+
+                if (!curr_loc.valid) begin
+                    let mset <- free_list.allocSet();
+                    case (mset) matches
+                        tagged Valid .set: begin
+                            mem.write(set, 0, TaggedTile { t: tile, st: st });
+                            usage_tracker.setFrame(set, 1);
+
+                            FRAMES_PER_SET_LOG zero_frame = 0;
+                            storage_location = StorageLocation { set: set, frame: 0, valid: True };
+                            new_loc = StorageLocation { set: set, frame: 1, valid: True };
                         end
-
-                        StorageLocation new_loc = curr_loc;
-                        StorageLocation storage_location = curr_loc;
-
-                        if (!curr_loc.valid) begin
-                            let mset <- free_list.allocSet();
-                            case (mset) matches
-                                tagged Valid .set: begin
-                                    mem.write(set, 0, TaggedTile { t: tile, st: st });
-                                    usage_tracker.setFrame(set, 1);
-
-                                    FRAMES_PER_SET_LOG zero_frame = 0;
-                                    storage_location = StorageLocation { set: set, frame: 0, valid: True };
-                                    new_loc = StorageLocation { set: set, frame: 1, valid: True };
-                                end
-                                default: begin
-                                    $display("***** Out of memory *****");
-                                    $finish;
-                                end
-                            endcase
-                        end else begin
-                            let set = curr_loc.set;
-                            let frame = curr_loc.frame;
-                            storage_location = curr_loc;
-
-                            mem.write(set, frame, TaggedTile { t: tile, st: st });
-                            let full <- usage_tracker.incFrame(set);
-
-                            new_loc = StorageLocation {
-                                set: set,
-                                frame: frame + 1,
-                                valid: !full
-                            };
+                        default: begin
+                            $display("***** Out of memory *****");
+                            $finish;
                         end
+                    endcase
+                end else begin
+                    let set = curr_loc.set;
+                    let frame = curr_loc.frame;
+                    storage_location = curr_loc;
 
-                        let tm = token_table.sub(token_counter);
-                        tm.vec[tm.next_idx] = storage_location;
-                        tm.next_idx = tm.next_idx + 1;
-                        token_table.upd(token_counter, tm);
+                    mem.write(set, frame, TaggedTile { t: tile, st: st });
+                    let full <- usage_tracker.incFrame(set);
 
-                        if (emit_token) begin
-                            let token_to_emit = token_counter;
-                            token_counter <= token_counter + 1;
-                            token_out.enq(tagged Tag_Data tuple2(tagged Tag_Scalar token_to_emit, new_st));
-                        end
-                        curr_loc <= new_loc;
-                    end
-                    tagged Tag_Ref .r: begin
-                        $display("[ERROR]: Reference received in data input");
-                        $finish(0);
-                    end
-                    tagged Tag_Scalar .scalar: begin
-                        $display("[ERROR]: Scalar received in data input");
-                        $finish(0);
-                    end
-                endcase
+                    new_loc = StorageLocation {
+                        set: set,
+                        frame: frame + 1,
+                        valid: !full
+                    };
+                end
+
+                let tm = token_table.sub(token_counter);
+                tm.vec[tm.next_idx] = storage_location;
+                tm.next_idx = tm.next_idx + 1;
+                token_table.upd(token_counter, tm);
+
+                if (emit_token) begin
+                    let token_to_emit = token_counter;
+                    token_counter <= token_counter + 1;
+                    token_out.enq(tagged Tag_Data tuple2(tagged Tag_Scalar token_to_emit, new_st));
+                end
+                curr_loc <= new_loc;
             end
             tagged Tag_Instruction .ip: begin
                 $display("[ERROR]: Instruction received in data input"); // TODO: Should be able to accept incoming config
@@ -147,22 +137,15 @@ module mkPMU#(
     endrule
 
     // Rule to handle token retrievals: find matching value and return it
-    rule start_load_tile (load_token == tagged Invalid);
+    rule start_load_tile (!isValid(load_token));
         let token_msg = token_in.first;
         token_in.deq;
         
         case (token_msg) matches
             tagged Tag_Data {.tt, .st}: begin
-                case (tt) matches
-                    tagged Tag_Scalar .token_input: begin
-                        load_token <= tagged Valid token_input;
-                        load_idx <= 0;
-                    end
-                    default: begin
-                        $display("[ERROR]: Expected scalar token");
-                        $finish(0);
-                    end
-                endcase
+                let token_input = unwrapScalar(tt);
+                load_token <= tagged Valid token_input;
+                load_idx <= 0;
             end
             tagged Tag_EndToken .et: begin
                 // Print the state of the memory being used
