@@ -4,8 +4,10 @@ import Parameters::*;
 import Vector::*;
 
 typedef Int#(32) StopToken;
-typedef 4 TILE_SIZE;
-typedef Vector#(TILE_SIZE, Vector#(TILE_SIZE, Scalar)) Tile;
+typedef 16 TILE_SIZE;
+
+typedef Bit#(TMul#(TILE_SIZE, TMul#(TILE_SIZE, SizeOf#(Scalar)))) Tile;
+// typedef Vector#(TILE_SIZE, Vector#(TILE_SIZE, Scalar)) Tile;
 
 /*
 function Tile add_tile (Tile a, Tile b);
@@ -135,7 +137,7 @@ function Tile matmul_tile (Tile a, Tile b);
 endfunction
 */
 
-typedef Int#(32) Ref;
+typedef Bit#(32) Ref;
 typedef Bit#(0) EndToken;
 
 typedef struct {
@@ -150,8 +152,8 @@ typedef union tagged {
 } Data deriving (Bits, FShow);
 
 typedef struct {
-    Int#(16) ptr;
-    Int#(16) port_idx;
+    UInt#(16) ptr;
+    UInt#(16) port_idx;
 } Instruction_Ptr deriving (Bits, FShow);
 
 typedef union tagged {

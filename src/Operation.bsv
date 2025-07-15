@@ -1,8 +1,11 @@
+package Operation;
+
 import FIFOF::*;
 import FIFO::*;
 import Vector::*;
 import Assert::*;
 import Types::*;
+import FileReader::*;
 
 interface Operation_IFC;
     method Action put(Int#(32) input_port, ChannelMessage msg);
@@ -145,6 +148,7 @@ module mkBinaryMap#(function Tile func (Tile tile, Tile tile2)) (Operation_IFC);
 
         if (cur_1 matches tagged Tag_Data .current_1 &&& cur_2 matches tagged Tag_Data .current_2) begin
             let out = func(tpl_1(current_1).Tag_Tile, tpl_1(current_2).Tag_Tile);
+            $display("ST1: %d, ST2: %d", tpl_2(current_1), tpl_2(current_2));
             dynamicAssert(tpl_2(current_2) == tpl_2(current_1), "Stop tokens must be the same");
             output_fifo.enq(tagged Tag_Data tuple2(tagged Tag_Tile out, tpl_2(current_1)));
         end
@@ -164,7 +168,7 @@ module mkBinaryMap#(function Tile func (Tile tile, Tile tile2)) (Operation_IFC);
     endmethod
 endmodule
 
-module mkPromote(Operation_IFC);
+module mkPromote#(Integer _rank_unused) (Operation_IFC);
     FIFO#(ChannelMessage) input_fifo <- mkFIFO;
     FIFO#(ChannelMessage) output_fifo <- mkFIFO;
 
@@ -191,25 +195,13 @@ module mkPromote(Operation_IFC);
     endmethod
 endmodule
 
-module mkBufferize#(Int#(32) num_buffer_elements) (Operation_IFC);
-    FIFO#(ChannelMessage) input_fifo <- mkFIFO;
-    FIFO#(ChannelMessage) output_token <- mkFIFO;
-    FIFO#(ChannelMessage) input_token <- mkFIFO;
-    FIFO#(ChannelMessage) output_data <- mkFIFO;
-
-    // Reg#(Vector#(num_buffer_elements, ChannelMessage)) buffer <- mkReg(replicate(tagged Tag_EndToken));
-
-    rule do_bufferize;
-    endrule
-endmodule
-
 typedef enum {
     AccumBigTile_Fill,
     AccumBigTile_Accum,
     AccumBigTile_Drain
 } AccumBigTileState deriving (Bits, Eq, FShow);
 
-module mkAccumBigTile#(Int#(32) rank, function Tile func (Tile tile, Tile tile2)) (Operation_IFC);
+module mkAccumBigTile#(function Tile func (Tile tile, Tile tile2), Int#(32) rank) (Operation_IFC);
     FIFO#(ChannelMessage) input_fifo <- mkFIFO;
     FIFO#(ChannelMessage) partial_input_fifo <- mkFIFO;
     FIFO#(ChannelMessage) partial_output_fifo <- mkFIFO;
@@ -287,6 +279,19 @@ module mkAccumBigTile#(Int#(32) rank, function Tile func (Tile tile, Tile tile2)
     endmethod
 endmodule
 
+module mkTileReader#(Integer num_entries, String filename) (Operation_IFC);
+    FileReader_IFC#(TaggedTile) reader <- mkFileReader(num_entries, filename);
+
+    method ActionValue#(ChannelMessage) get(Int#(32) output_port);
+        TaggedTile tile <- reader.readNext;
+        return tagged Tag_Data tuple2(tagged Tag_Tile tile.t, tile.st);
+    endmethod 
+
+    method Action put(Int#(32) input_port, ChannelMessage msg);
+        $error("TileReader does not support put");
+    endmethod
+endmodule
+
 module mkTop(Empty);
     let m1 <- mkBinaryMap(matmul_t_tile);
     let m2 <- mkBinaryMap(matmul_t_tile);
@@ -297,13 +302,13 @@ module mkTop(Empty);
     let m3 <- mkBinaryMap(mul_tile);
     let m4 <- mkUnaryMap(silu_tile);
 
-    let p5 <- mkPromote;
+    let p5 <- mkPromote(0);
 
     let m6 <- mkBinaryMap(matmul_t_tile);
     let a7 <- mkAccum(add_tile, 1);
 
     rule stimulus;
-        let tile = replicate(replicate(5));
+        let tile = 5;
         let msg = tagged Tag_Data tuple2(tagged Tag_Tile tile, 5);
         m1.put(0, msg);
         m1.put(1, msg);
@@ -358,3 +363,5 @@ module mkTop(Empty);
         $finish;
     endrule
 endmodule
+
+endpackage
