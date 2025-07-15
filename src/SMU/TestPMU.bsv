@@ -6,7 +6,7 @@ import Vector::*;
 import FIFO::*;
 import Parameters::*;
 
-typedef 7 NUM_TEST_VALUES;
+typedef 123 NUM_TEST_VALUES;
 typedef 1 RANK;
 
 // Function to print a tile matrix
@@ -43,8 +43,8 @@ module mkTestPMU();
         mat[1][1] = fromInteger(4*i + 3);
         testValues[i] = TaggedTile { t: mat, st: fromInteger(0) };                
     end
-    testValues[2].st = fromInteger(1);
-    testValues[6].st = fromInteger(2);
+    testValues[82].st = fromInteger(1);
+    testValues[122].st = fromInteger(2);
 
     // === State tracking ===
     Reg#(Bit#(TLog#(TAdd#(NUM_TEST_VALUES, 2)))) putIndex <- mkReg(0);

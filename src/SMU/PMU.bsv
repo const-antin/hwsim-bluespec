@@ -1,5 +1,3 @@
-// Currently we access the set / frame by using [0000,SetBit,FrameBit] as a single value
-
 package PMU;
 
 import FIFO::*;
@@ -63,6 +61,10 @@ module mkPMU#(
         end else begin
             init_counter <= init_counter + 1;
         end
+    endrule
+
+    rule cycle_counter (token_table_initialized);
+        $display("[CYCLE COUNTER]: %d", token_counter);
     endrule
 
     rule store_tile (token_table_initialized);
