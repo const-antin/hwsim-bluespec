@@ -12,6 +12,10 @@ typedef 4 NUM_OUTPUTS_PER_PMU;
 
 typedef 4 NUM_STAGES;
 
-typedef Int#(32) Scalar;
+typedef 8 FRAMES_PER_SET;
+typedef Bit#(TLog#(FRAMES_PER_SET)) FRAMES_PER_SET_LOG;
+typedef 128 SETS;
+typedef Bit#(TLog#(SETS)) SETS_LOG;
+typedef TMul#(FRAMES_PER_SET, SETS) MAX_ENTRIES;
 
 endpackage

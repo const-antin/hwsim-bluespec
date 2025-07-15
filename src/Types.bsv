@@ -4,10 +4,12 @@ import Parameters::*;
 import Vector::*;
 
 typedef Int#(32) StopToken;
-typedef 16 TILE_SIZE;
+typedef Int#(32) Scalar;
 
+typedef 16 TILE_SIZE;
 typedef Bit#(TMul#(TILE_SIZE, TMul#(TILE_SIZE, SizeOf#(Scalar)))) Tile;
-// typedef Vector#(TILE_SIZE, Vector#(TILE_SIZE, Scalar)) Tile;
+
+
 
 /*
 function Tile add_tile (Tile a, Tile b);
