@@ -11,9 +11,9 @@ function Tile unwrapTile(Data d);
     return fromMaybe(?, result);
 endfunction
 
-function Scalar unwrapScalar(Data d);
+function Tuple2#(Bit#(32), Bool) unwrapRef(Data d);
     let result = case (d) matches
-        tagged Tag_Scalar .s : tagged Valid s;
+        tagged Tag_Ref {.r, .deallocate} : tagged Valid tuple2(r, deallocate);
         default : return tagged Invalid;
     endcase;
     return fromMaybe(?, result);

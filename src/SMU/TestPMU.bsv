@@ -10,18 +10,18 @@ typedef 123 NUM_TEST_VALUES;
 typedef 1 RANK;
 
 // Function to print a tile matrix
-function Action printTile(TaggedTile tile);
-    return action
-        for (Integer i = 0; i < valueOf(TILE_SIZE); i = i + 1) begin
-            $write("  ");
-            for (Integer j = 0; j < valueOf(TILE_SIZE); j = j + 1) begin
-                $write("%0d ", tile.t[i][j]);
-            end
-            $write("\n");
-        end
-        $write("  st: %0d\n", tile.st);
-    endaction;
-endfunction
+// function Action printTile(TaggedTile tile);
+//     return action
+//         for (Integer i = 0; i < valueOf(TILE_SIZE); i = i + 1) begin
+//             $write("  ");
+//             for (Integer j = 0; j < valueOf(TILE_SIZE); j = j + 1) begin
+//                 $write("%0d ", unpack(tile.t)[i*valueOf(TILE_SIZE) + j]);
+//             end
+//             $write("\n");
+//         end
+//         $write("  st: %0d\n", tile.st);
+//     endaction;
+// endfunction
 
 (* synthesize *)
 module mkTestPMU();
@@ -35,7 +35,7 @@ module mkTestPMU();
         mat[0][1] = fromInteger(4*i + 1);
         mat[1][0] = fromInteger(4*i + 2);
         mat[1][1] = fromInteger(4*i + 3);
-        testValues[i] = TaggedTile { t: mat, st: fromInteger(0) };                
+        testValues[i] = TaggedTile { t: pack(mat), st: fromInteger(0) };                
     end
     testValues[82].st = fromInteger(1);
     testValues[122].st = fromInteger(2);
@@ -44,10 +44,19 @@ module mkTestPMU();
     Reg#(Bit#(TLog#(TAdd#(NUM_TEST_VALUES, 2)))) putIndex <- mkReg(0);
     Reg#(Bit#(TLog#(TAdd#(NUM_TEST_VALUES, 2)))) getIndex <- mkReg(0);
     Reg#(Bit#(TLog#(TAdd#(NUM_TEST_VALUES, 2)))) valIndex <- mkReg(0);
-    Vector#(NUM_TEST_VALUES, Reg#(Int#(32))) tokens <- replicateM(mkReg(0));
+    Vector#(NUM_TEST_VALUES, Reg#(Tuple2#(Bit#(32), Bool))) tokens <- replicateM(mkReg(tuple2(0, False)));
+
+    Reg#(Bool) started <- mkReg(False);
+
+    rule wait_until_ready (!started);
+        if (pmu.ready()) begin
+            $display("[TESTBENCH] PMU is ready.");
+            started <= True;
+        end
+    endrule
 
     // === Put values ===
-    rule driveInput;
+    rule driveInput (started);
         if (putIndex < fromInteger(valueOf(NUM_TEST_VALUES))) begin 
             pmu.put_data(tagged Tag_Data tuple2(tagged Tag_Tile testValues[putIndex].t, testValues[putIndex].st));
             // $display("Test: Putting value");
@@ -66,11 +75,11 @@ module mkTestPMU();
         case (token) matches
             tagged Tag_Data {.d, .st}: begin
                 case (d) matches
-                    tagged Tag_Scalar .s: begin
-                        tokens[getIndex] <= s;
-                        $display("Test: Got token %d %d", s, st);
+                    tagged Tag_Ref {.r, .deallocate}: begin
+                        tokens[getIndex] <= tuple2(r, deallocate);
+                        $display("Test: Got token %d %d %d", r, deallocate, st);
                         getIndex <= getIndex + 1;
-                        pmu.put_token(tagged Tag_Data tuple2(tagged Tag_Scalar s, st));
+                        pmu.put_token(tagged Tag_Data tuple2(tagged Tag_Ref tuple2(r, True), st));
                     end
                     default: begin
                         $display("Expected scalar token, got something else");
@@ -102,14 +111,14 @@ module mkTestPMU();
 
                         if (TaggedTile { t: t, st: st } == expected) begin
                             $display("PASSED:");
-                            printTile(TaggedTile { t: t, st: st });
+                            // printTile(TaggedTile { t: t, st: st });
                             $display("Expected [st = %0d]:", expected.st);
-                            printTile(expected);
+                            // printTile(expected);
                         end else begin
                             $display("FAILED:");
-                            printTile(TaggedTile { t: t, st: st });
+                            // printTile(TaggedTile { t: t, st: st });
                             $display("Expected [st = %0d]:", expected.st);
-                            printTile(expected);
+                            // printTile(expected);
                             // $finish(0); // Exits on failure
                         end
                     end
