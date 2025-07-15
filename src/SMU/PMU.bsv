@@ -22,18 +22,30 @@ typedef struct {
   UInt#(TLog#(MAX_ENTRIES)) next_idx;
 } TokenMapping deriving (Bits, Eq);
 
+interface Operation_IFC;
+    method Action put(Int#(32) input_port, ChannelMessage msg);
+    method ActionValue#(ChannelMessage) get(Int#(32) output_port);
+endinterface
+
 // Interface that just exposes the modules existence
 interface PMU_IFC;
+    interface Operation_IFC operation;
+    
+    method Action put_data(ChannelMessage msg);
+    method ActionValue#(ChannelMessage) get_token();
+    method Action put_token(ChannelMessage msg);
+    method ActionValue#(ChannelMessage) get_data();
 endinterface
+
 
 // PMU module that processes between the FIFOs
 module mkPMU#(
-    FIFO#(ChannelMessage) data_in,      // Values come in here
-    FIFO#(ChannelMessage) token_out,    // Generated tokens go out here
-    FIFO#(ChannelMessage) token_in,     // Tokens come back in here
-    FIFO#(ChannelMessage) data_out,     // Retrieved values go out here
     Int#(32) rank_in                    // Rank of the current tile
 )(PMU_IFC);
+    FIFO#(ChannelMessage) data_in <- mkFIFO;      // Values come in here
+    FIFO#(ChannelMessage) token_out <- mkFIFO;    // Generated tokens go out here
+    FIFO#(ChannelMessage) token_in <- mkFIFO;     // Tokens come back in here
+    FIFO#(ChannelMessage) data_out <- mkFIFO;     // Retrieved values go out here
     
     // Only internal state needed is the storage FIFO and token counter
     BankedMemory_IFC mem <- mkBankedMemory;
@@ -186,6 +198,43 @@ module mkPMU#(
             end
         end
     endrule
+
+    method Action put_data(ChannelMessage msg);
+        data_in.enq(msg);
+    endmethod
+    method ActionValue#(ChannelMessage) get_token();
+        token_out.deq;
+        return token_out.first;
+    endmethod
+    method Action put_token(ChannelMessage msg);
+        token_in.enq(msg);
+    endmethod
+    method ActionValue#(ChannelMessage) get_data();
+        data_out.deq;
+        return data_out.first;
+    endmethod
+
+    interface Operation_IFC operation;
+        method Action put(Int#(32) i, ChannelMessage msg); // i = 0 for data, 1 for token
+            if (i == 0) begin
+                data_in.enq(msg);
+            end else begin
+                token_in.enq(msg);
+            end
+        endmethod
+
+        method ActionValue#(ChannelMessage) get(Int#(32) i); // i = 0 for token, 1 for data
+            ChannelMessage msg;
+            if (i == 0) begin
+                token_out.deq;
+                msg = token_out.first;
+            end else begin
+                data_out.deq;
+                msg = data_out.first;
+            end
+            return msg;
+        endmethod
+    endinterface
 
 endmodule
 

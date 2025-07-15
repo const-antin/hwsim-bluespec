@@ -25,13 +25,7 @@ endfunction
 
 (* synthesize *)
 module mkTestPMU();
-    // Create the four FIFOs that connect to the PMU
-    FIFO#(ChannelMessage) data_in <- mkFIFO;
-    FIFO#(ChannelMessage) token_out <- mkFIFO;
-    FIFO#(ChannelMessage) token_in <- mkFIFO;
-    FIFO#(ChannelMessage) data_out <- mkFIFO;
-    
-    PMU_IFC pmu <- mkPMU(data_in, token_out, token_in, data_out, fromInteger(valueOf(RANK)));
+    PMU_IFC pmu <- mkPMU(fromInteger(valueOf(RANK)));
 
     // === Dynamically create NUM_TEST_VALUES test matrices ===
     Vector#(NUM_TEST_VALUES, TaggedTile) testValues;
@@ -55,12 +49,12 @@ module mkTestPMU();
     // === Put values ===
     rule driveInput;
         if (putIndex < fromInteger(valueOf(NUM_TEST_VALUES))) begin 
-            data_in.enq(tagged Tag_Data tuple2(tagged Tag_Tile testValues[putIndex].t, testValues[putIndex].st));
+            pmu.put_data(tagged Tag_Data tuple2(tagged Tag_Tile testValues[putIndex].t, testValues[putIndex].st));
             // $display("Test: Putting value");
             // printTile(testValues[putIndex]);
             putIndex <= putIndex + 1;
         end else if (putIndex == fromInteger(valueOf(NUM_TEST_VALUES))) begin
-            data_in.enq(tagged Tag_EndToken 0);
+            pmu.put_data(tagged Tag_EndToken 0);
             putIndex <= putIndex + 1;
             // $display("Test: Putting end token");
         end
@@ -68,8 +62,7 @@ module mkTestPMU();
 
     // === Handle token output ===
     rule handleToken;
-        let token = token_out.first;
-        token_out.deq;
+        let token <- pmu.get_token();
         case (token) matches
             tagged Tag_Data {.d, .st}: begin
                 case (d) matches
@@ -77,7 +70,7 @@ module mkTestPMU();
                         tokens[getIndex] <= s;
                         $display("Test: Got token %d %d", s, st);
                         getIndex <= getIndex + 1;
-                        token_in.enq(tagged Tag_Data tuple2(tagged Tag_Scalar s, st));
+                        pmu.put_token(tagged Tag_Data tuple2(tagged Tag_Scalar s, st));
                     end
                     default: begin
                         $display("Expected scalar token, got something else");
@@ -87,7 +80,7 @@ module mkTestPMU();
             end
             tagged Tag_EndToken .et: begin
                 $display("Test: End token received in token out");
-                token_in.enq(tagged Tag_EndToken 0);
+                pmu.put_token(tagged Tag_EndToken 0);
             end
             default: begin
                 $display("Expected Tag_Data in token_out");
@@ -98,8 +91,7 @@ module mkTestPMU();
 
     // === Handle returned value ===
     rule handleValue;
-        let value = data_out.first;
-        data_out.deq;
+        let value <- pmu.get_data();
 
         case (value) matches
             tagged Tag_Data {.d, .st}: begin
