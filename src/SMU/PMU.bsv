@@ -54,9 +54,9 @@ module mkPMU#(
     SetUsageTracker_IFC usage_tracker <- mkSetUsageTracker;
     Reg#(StorageLocation) curr_loc <- mkReg(StorageLocation { set: 0, frame: 0, valid: False });
     Reg#(Int#(32)) rank <- mkReg(rank_in);
-    Reg#(Bit#(32)) token_counter <- mkReg(0);
+    Reg#(Bit#(TLog#(MAX_ENTRIES))) token_counter <- mkReg(0);
     Reg#(Bit#(32)) cycle_count <- mkReg(0);
-    RegFile#(Bit#(32), TokenMapping) token_table <- mkRegFile(0, fromInteger(valueOf(MAX_ENTRIES) - 1));
+    RegFile#(Bit#(TLog#(MAX_ENTRIES)), TokenMapping) token_table <- mkRegFile(0, fromInteger(valueOf(MAX_ENTRIES) - 1));
     let frame_width = valueOf(TLog#(FRAMES_PER_SET));
     let set_width = valueOf(TLog#(SETS));
     Reg#(Maybe#(Tuple2#(Bit#(32), Bool))) load_token <- mkReg(tagged Invalid);
@@ -68,7 +68,7 @@ module mkPMU#(
     Reg#(Int#(32)) num_frames_read <- mkReg(0);
     
     Reg#(Bool) token_table_initialized <- mkReg(False);
-    Reg#(Bit#(32)) init_counter <- mkReg(0);
+    Reg#(Bit#(TLog#(MAX_ENTRIES))) init_counter <- mkReg(0);
     rule init_token_table (!token_table_initialized);
         TokenMapping tm;
         tm.vec = replicate(StorageLocation { set: 0, frame: 0, valid: False });
@@ -141,7 +141,7 @@ module mkPMU#(
                 token_table.upd(token_counter, tm);
 
                 if (emit_token) begin
-                    let token_to_emit = token_counter;
+                    Bit#(32) token_to_emit = zeroExtend(token_counter);
                     token_counter <= token_counter + 1;
                     token_out.enq(tagged Tag_Data tuple2(tagged Tag_Ref tuple2(token_to_emit, False), new_st));
                 end
@@ -191,7 +191,7 @@ module mkPMU#(
 
     rule continue_load_tile (isValid(load_token) && token_table_initialized);
         $display("[DEBUG]: Continuing load tile %d, %d", fromMaybe(tuple2(0, False), load_token).fst, fromMaybe(tuple2(0, False), load_token).snd);
-        let tm = token_table.sub(fromMaybe(tuple2(0, False), load_token).fst);
+        let tm = token_table.sub(truncate(fromMaybe(tuple2(0, False), load_token).fst));
         let deallocate = fromMaybe(tuple2(0, False), load_token).snd;
         if (load_idx < tm.next_idx) begin
             let loc = tm.vec[load_idx];
