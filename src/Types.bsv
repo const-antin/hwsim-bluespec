@@ -6,10 +6,9 @@ import Vector::*;
 typedef Int#(32) StopToken;
 typedef Int#(32) Scalar;
 
-typedef 16 TILE_SIZE;
+typedef 2 TILE_SIZE;
+typedef TMul#(TILE_SIZE, TILE_SIZE) TILE_SIZE_SQUARE;
 typedef Bit#(TMul#(TILE_SIZE, TMul#(TILE_SIZE, SizeOf#(Scalar)))) Tile;
-
-
 
 /*
 function Tile add_tile (Tile a, Tile b);

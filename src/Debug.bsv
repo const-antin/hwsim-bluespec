@@ -11,14 +11,14 @@ endinterface
 module mkDebugOperation#(Operation_IFC op, String name) (DebugOperation);
     method Action put(Int#(32) input_port, ChannelMessage msg);
         let st = tpl_2(msg.Tag_Data);
-        $display("DebugOperation: %s put %d %d", name, input_port, fshow(st));
+        $display("DebugOperation: %s put <%d, %d>", name, input_port, st);
         op.put(input_port, msg);
     endmethod
 
     method ActionValue#(ChannelMessage) get(Int#(32) output_port);
         let msg <- op.get(output_port);
         let st = tpl_2(msg.Tag_Data);
-        $display("DebugOperation: %s get %d %d", name, output_port, fshow(st));
+        $display("DebugOperation: %s get <%d, %d>", name, output_port, st);
         return msg;
     endmethod
 endmodule

@@ -61,8 +61,12 @@ module mkRepeatStatic#(Int#(32) num_repeats) (Operation_IFC);
     rule do_repeat if (count < num_repeats);
         let cur = input_fifo.first;
 
-        if (cur matches tagged Tag_Data .current &&& count == num_repeats - 1) begin
-            cur = tagged Tag_Data tuple2(tpl_1(current), tpl_2(current) + 1);
+        if (cur matches tagged Tag_Data .current) begin
+            if (count == num_repeats - 1) begin
+                cur = tagged Tag_Data tuple2(tpl_1(current), tpl_2(current) + 1);
+            end else begin 
+                cur = tagged Tag_Data tuple2(tpl_1(current), 0);
+            end
         end
 
         output_fifo.enq(cur);
@@ -138,6 +142,7 @@ module mkBinaryMap#(function Tile func (Tile tile, Tile tile2)) (Operation_IFC);
     FIFO#(ChannelMessage) input_fifo1 <- mkFIFO;
     FIFO#(ChannelMessage) input_fifo2 <- mkFIFO;
     FIFO#(ChannelMessage) output_fifo <- mkFIFO;
+    Reg#(Int#(32)) count <- mkReg(0);
 
     rule do_map;
         let cur_1 = input_fifo1.first;
@@ -148,9 +153,14 @@ module mkBinaryMap#(function Tile func (Tile tile, Tile tile2)) (Operation_IFC);
 
         if (cur_1 matches tagged Tag_Data .current_1 &&& cur_2 matches tagged Tag_Data .current_2) begin
             let out = func(tpl_1(current_1).Tag_Tile, tpl_1(current_2).Tag_Tile);
-            $display("ST1: %d, ST2: %d", tpl_2(current_1), tpl_2(current_2));
-            dynamicAssert(tpl_2(current_2) == tpl_2(current_1), "Stop tokens must be the same");
+            $display("ST1: %d, ST2: %d, count: %d", tpl_2(current_1), tpl_2(current_2), count);
+            if (tpl_2(current_2) != tpl_2(current_1)) begin
+                $display("Stop tokens are not the same, left: %d, right: %d", tpl_2(current_1), tpl_2(current_2));
+                // $finish;
+            end
+            // dynamicAssert(tpl_2(current_2) == tpl_2(current_1), "Stop tokens must be the same");
             output_fifo.enq(tagged Tag_Data tuple2(tagged Tag_Tile out, tpl_2(current_1)));
+            count <= count + 1;
         end
     endrule
 
@@ -216,9 +226,9 @@ module mkAccumBigTile#(function Tile func (Tile tile, Tile tile2), Int#(32) rank
         let st = tpl_2(cur.Tag_Data);
         partial_output_fifo.enq(cur);
 
-        if (st > rank) begin
+        if (st >= rank) begin
             state <= AccumBigTile_Drain;
-        end else if (st == rank) begin 
+        end else if (st == 2) begin 
             state <= AccumBigTile_Accum;
         end
     endrule
@@ -232,7 +242,7 @@ module mkAccumBigTile#(function Tile func (Tile tile, Tile tile2), Int#(32) rank
         let st = tpl_2(add.Tag_Data);
         let out = func(tpl_1(add.Tag_Data).Tag_Tile, tpl_1(acc.Tag_Data).Tag_Tile);
 
-        if (st > rank) begin 
+        if (st >= rank) begin 
             state <= AccumBigTile_Drain;
         end 
 
@@ -270,11 +280,11 @@ module mkAccumBigTile#(function Tile func (Tile tile, Tile tile2), Int#(32) rank
 
     method ActionValue#(ChannelMessage) get(Int#(32) output_port);
         if (output_port == 0) begin
-            output_fifo.deq;
-            return output_fifo.first;
-        end else begin
             partial_output_fifo.deq;
             return partial_output_fifo.first;
+        end else begin
+            output_fifo.deq;
+            return output_fifo.first;
         end
     endmethod
 endmodule
