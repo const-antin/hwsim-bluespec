@@ -6,7 +6,7 @@ import Vector::*;
 typedef Int#(32) StopToken;
 typedef Int#(32) Scalar;
 
-typedef 2 TILE_SIZE;
+typedef 16 TILE_SIZE;
 typedef TMul#(TILE_SIZE, TILE_SIZE) TILE_SIZE_SQUARE;
 typedef Bit#(TMul#(TILE_SIZE, TMul#(TILE_SIZE, SizeOf#(Scalar)))) Tile;
 
@@ -138,7 +138,8 @@ function Tile matmul_tile (Tile a, Tile b);
 endfunction
 */
 
-typedef Tuple2#(Bit#(32), Bool) Ref;
+typedef Bit#(32) Ref_Inner;
+typedef Tuple2#(Ref_Inner, Bool) Ref; // Reference, deallocate
 typedef Bit#(0) EndToken;
 
 typedef struct {

@@ -31,56 +31,41 @@ module mkSimpleBufferize#(Int#(32) rank, Integer num_entries) (Bufferize#(num_en
     FIFOF#(ChannelMessage) token_request_fifo <- mkFIFOF;    
     FIFOF#(ChannelMessage) token_output_fifo <- mkFIFOF;
 
-    FIFOF#(Tuple2#(Ref, StopToken)) token_output_stage <- mkFIFOF;
-    Reg#(Bool) token_output_stage_state <- mkReg(False);
-
     RegFile#(Bit#(TAdd#(TLog#(num_entries), TLog#(SIZE_PER_ENTRY))), Maybe#(Tuple2#(Data, StopToken))) buffer <- mkRegFile(0, fromInteger(valueOf(num_entries) - 1));
 
     Reg#(Vector#(num_entries, Bool)) free <- mkReg(replicate(True));
 
-    Reg#(Bit#(TLog#(num_entries))) write_ptr <- mkReg(0);
-    Reg#(Bit#(TLog#(SIZE_PER_ENTRY))) write_subptr <- mkReg(0);
+    Reg#(Bit#(TLog#(num_entries))) entry_write_ptr <- mkReg(0);
+    Reg#(Bit#(TLog#(SIZE_PER_ENTRY))) subentry_write_ptr <- mkReg(0);
     
     Reg#(Bit#(32)) read_ptr <- mkReg(0);
 
-    (* descending_urgency = "deallocate_storage, store" *)
-    rule store if (free[write_ptr] == True &&& input_fifo.first matches tagged Tag_Data { .data, .st });
+    (* descending_urgency = "read, store" *)
+    rule store if (free[entry_write_ptr] == True &&& input_fifo.first matches tagged Tag_Data { .data, .st });
         input_fifo.deq;
 
-        Bit#(TAdd#(TLog#(num_entries), TLog#(SIZE_PER_ENTRY))) write_ptr_trunc = extend(write_ptr);
-        Bit#(TAdd#(TLog#(num_entries), TLog#(SIZE_PER_ENTRY))) write_subptr_trunc = extend(write_subptr);
+        //Bit#(TAdd#(TLog#(num_entries), TLog#(SIZE_PER_ENTRY))) entry_write_ptr_trunc = extend(entry_write_ptr);
+        //Bit#(TAdd#(TLog#(num_entries), TLog#(SIZE_PER_ENTRY))) subentry_write_ptr_trunc = extend(subentry_write_ptr);
 
-        let index = write_ptr_trunc << fromInteger(valueOf(TLog#(SIZE_PER_ENTRY))) | write_subptr_trunc;
+        //let index = entry_write_ptr_trunc << fromInteger(valueOf(TLog#(SIZE_PER_ENTRY))) | subentry_write_ptr_trunc;
+        let index = { entry_write_ptr, subentry_write_ptr };
         buffer.upd(index, tagged Valid (tuple2(data, st)));
         // buffer.upd([write_ptr][write_subptr] <= tagged Valid (tuple2(data, st));
         if (st >= rank) begin 
-            write_ptr <= (write_ptr + 1);
-            write_subptr <= 0;
-            Ref r = resize(write_ptr);
-            token_output_stage.enq(tuple2(r, st - rank));
-            free[write_ptr] <= False;
+            entry_write_ptr <= (entry_write_ptr + 1);
+            subentry_write_ptr <= 0;
+            Ref_Inner r = resize(entry_write_ptr);
+            token_output_fifo.enq(tagged Tag_Data tuple2(tagged Tag_Ref (tuple2(r, True)), st - rank));
+            free[entry_write_ptr] <= False;
         end else begin 
-            write_subptr <= write_subptr + 1;
+            subentry_write_ptr <= subentry_write_ptr + 1;
         end 
     endrule
 
-    rule send_token; // We send the token + a deallocate request.
-        let in = token_output_stage.first;
-        
-        if (token_output_stage_state == False) begin
-            token_output_stage_state <= True;
-            token_output_fifo.enq(tagged Tag_Data (tuple2(Tag_Ref (tpl_1(in)), tpl_2(in))));
-        end else begin
-            token_output_stage.deq;
-            token_output_stage_state <= False;
-            token_output_fifo.enq(tagged Tag_Deallocate_Storage (tpl_1(in)));
-        end
-    endrule 
-
     rule read if (token_request_fifo.first matches tagged Tag_Data { .data, .st }
     );
-        if (free[data.Tag_Ref] == False) begin
-            let ptr = data.Tag_Ref;
+        if (free[tpl_1(data.Tag_Ref)] == False) begin
+            let ptr = tpl_1(data.Tag_Ref);
 
             let index = { ptr, read_ptr };
             let el = buffer.sub(resize(index));
@@ -93,15 +78,14 @@ module mkSimpleBufferize#(Int#(32) rank, Integer num_entries) (Bufferize#(num_en
             end else begin
                 read_ptr <= 0;
                 token_request_fifo.deq;
+
+                if (data matches tagged Tag_Ref { .r, .deallocate }) begin
+                    if (deallocate == True) begin
+                        free[r] <= True;
+                    end
+                end
             end
         end
-        
-    endrule
-
-    rule deallocate_storage if (token_request_fifo.first matches tagged Tag_Deallocate_Storage { .ptr });
-        free[ptr] <= True;
-        token_request_fifo.deq;
-        read_ptr <= 0; // This is kind of redundant but i thought it would not hurt.
     endrule
 
     method Action put_data(ChannelMessage msg);
@@ -152,10 +136,16 @@ module mkBufferize(Empty);
     let rpt <- mkRepeatStatic(10);
     let drained <- mkReg(0);
 
-    let state <- mkReg(0);
+    Reg#(UInt#(1)) state <- mkReg(0);
 
     rule push if (state == 0);
-        let data = tagged Tag_Data (tuple2(Tag_Tile (0), 1));
+        let data = tagged Tag_Data (tuple2(Tag_Tile (0), 0));
+        dut.put_data(data);
+        state <= state + 1;
+    endrule
+
+    rule push_2 if (state == 1);
+        let data = tagged Tag_Data (tuple2(Tag_Tile (1), 1));
         dut.put_data(data);
         state <= state + 1;
     endrule
@@ -167,7 +157,7 @@ module mkBufferize(Empty);
 
     rule repeat_output_to_bufferize_input;
         let data <- rpt.get(0);
-        $display("Repeat output: ", fshow(data));
+        // $display("Repeat output: ", fshow(data));
         dut.request_token(data);
     endrule
 
@@ -175,9 +165,9 @@ module mkBufferize(Empty);
         let data <- dut.get_data();
         $display("data: ", fshow(data), "end.");
         drained <= drained + 1;
-        if (drained == 9) begin
-            $finish(0);
-        end
+        // if (drained == 9) begin
+        //     $finish(0);
+        // end
     endrule
 
 endmodule

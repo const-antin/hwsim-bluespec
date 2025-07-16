@@ -62,19 +62,23 @@ module mkRepeatStatic#(Int#(32) num_repeats) (Operation_IFC);
         let cur = input_fifo.first;
 
         if (cur matches tagged Tag_Data .current) begin
+            Data to_send = tpl_1(current);
             if (count == num_repeats - 1) begin
-                cur = tagged Tag_Data tuple2(tpl_1(current), tpl_2(current) + 1);
+                if (to_send matches tagged Tag_Ref .r) begin
+                    to_send = tagged Tag_Ref tuple2(tpl_1(r), True);
+                end
+                cur = tagged Tag_Data tuple2(to_send, tpl_2(current) + 1);
             end else begin 
-                cur = tagged Tag_Data tuple2(tpl_1(current), 0);
+                if (to_send matches tagged Tag_Ref .r) begin
+                    to_send = tagged Tag_Ref tuple2(tpl_1(r), False);
+                end
+                cur = tagged Tag_Data tuple2(to_send, tpl_2(current) + 1);
             end
         end
 
         output_fifo.enq(cur);
 
-        if (cur matches tagged Tag_Deallocate_Storage .ptr) begin
-            input_fifo.deq;
-        end
-        else if (cur matches tagged Tag_Data .current) begin // This if is necessary so deallocates are not repeated
+        if (cur matches tagged Tag_Data .current) begin // This if is necessary so deallocates are not repeated
             count <= count + 1;
         end
     endrule
