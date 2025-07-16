@@ -72,7 +72,7 @@ module mkRepeatStatic#(Int#(32) num_repeats) (Operation_IFC);
                 if (to_send matches tagged Tag_Ref .r) begin
                     to_send = tagged Tag_Ref tuple2(tpl_1(r), False);
                 end
-                cur = tagged Tag_Data tuple2(to_send, tpl_2(current) + 1);
+                cur = tagged Tag_Data tuple2(to_send, 0);
             end
         end
 
