@@ -306,6 +306,25 @@ module mkTileReader#(Integer num_entries, String filename) (Operation_IFC);
     endmethod
 endmodule
 
+module mkPrinter#(String name) (Operation_IFC);
+    FIFO#(ChannelMessage) input_fifo <- mkFIFO;
+    rule print;
+        let cur = input_fifo.first;
+        input_fifo.deq;
+
+        $display("%s: %s", name, fshow(cur));
+    endrule
+
+    method Action put(Int#(32) input_port, ChannelMessage msg);
+        input_fifo.enq(msg);
+    endmethod
+
+    method ActionValue#(ChannelMessage) get(Int#(32) output_port);
+        $error("Printer does not support get");
+        return ?;
+    endmethod
+endmodule
+
 module mkTop(Empty);
     let m1 <- mkBinaryMap(matmul_t_tile);
     let m2 <- mkBinaryMap(matmul_t_tile);
