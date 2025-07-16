@@ -61,11 +61,6 @@ module mkPMU#(
     let set_width = valueOf(TLog#(SETS));
     Reg#(Maybe#(Tuple2#(Bit#(32), Bool))) load_token <- mkReg(tagged Invalid);
     Reg#(UInt#(TLog#(MAX_ENTRIES))) load_idx <- mkReg(0);
-
-    Reg#(Int#(32)) num_sets_used <- mkReg(0);
-    Reg#(Int#(32)) num_frames_used <- mkReg(0);
-    Reg#(Int#(32)) num_sets_read <- mkReg(0);
-    Reg#(Int#(32)) num_frames_read <- mkReg(0);
     
     Reg#(Bool) token_table_initialized <- mkReg(False);
     Reg#(Bit#(TLog#(MAX_ENTRIES))) init_counter <- mkReg(0);
@@ -105,7 +100,14 @@ module mkPMU#(
                 StorageLocation storage_location = curr_loc;
 
                 if (!curr_loc.valid) begin
-                    let mset <- free_list.allocSet();
+                    Bit#(SETS_LOG) exclude_mask = 0;
+                    // if (isValid(load_token)) begin
+                    //     let tm = token_table.sub(truncate(fromMaybe(tuple2(0, False), load_token).fst));
+                    //     let loc = tm.vec[load_idx];
+                    //     let set = loc.set;
+                    //     exclude_mask[set] = 1;
+                    // end
+                    let mset <- free_list.allocSet(exclude_mask);
                     case (mset) matches
                         tagged Valid .set: begin
                             mem.write(set, 0, TaggedTile { t: tile, st: st });
@@ -189,29 +191,26 @@ module mkPMU#(
         endcase
     endrule
 
-    // dynamic memory
     rule continue_load_tile (isValid(load_token) && token_table_initialized);
         $display("[DEBUG]: Continuing load tile %d, %d", fromMaybe(tuple2(0, False), load_token).fst, fromMaybe(tuple2(0, False), load_token).snd);
         let tm = token_table.sub(truncate(fromMaybe(tuple2(0, False), load_token).fst));
         let deallocate = fromMaybe(tuple2(0, False), load_token).snd;
-        if (load_idx < tm.next_idx) begin
-            let loc = tm.vec[load_idx];
-            let set = loc.set;
-            let frame = loc.frame;
-            let tile = mem.read(set, frame);
-            data_out.enq(tagged Tag_Data tuple2(tagged Tag_Tile tile.t, tile.st));
-            if (deallocate) begin
-                let empty <- usage_tracker.decFrame(set);
-                if (empty) begin
-                    free_list.freeSet(set); 
-                end
+        let loc = tm.vec[load_idx];
+        let set = loc.set;
+        let frame = loc.frame;
+        let tile = mem.read(set, frame);
+        data_out.enq(tagged Tag_Data tuple2(tagged Tag_Tile tile.t, tile.st));
+        if (deallocate) begin
+            let empty <- usage_tracker.decFrame(set);
+            if (empty) begin
+                free_list.freeSet(set); 
             end
-            if (load_idx == tm.next_idx - 1) begin
-                load_token <= tagged Invalid;
-                load_idx <= 0;
-            end else begin
-                load_idx <= load_idx + 1;
-            end
+        end
+        if (load_idx == tm.next_idx - 1) begin
+            load_token <= tagged Invalid;
+            load_idx <= 0;
+        end else begin
+            load_idx <= load_idx + 1;
         end
     endrule
 
