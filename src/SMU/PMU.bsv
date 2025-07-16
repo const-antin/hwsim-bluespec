@@ -189,6 +189,7 @@ module mkPMU#(
         endcase
     endrule
 
+    // dynamic memory
     rule continue_load_tile (isValid(load_token) && token_table_initialized);
         $display("[DEBUG]: Continuing load tile %d, %d", fromMaybe(tuple2(0, False), load_token).fst, fromMaybe(tuple2(0, False), load_token).snd);
         let tm = token_table.sub(truncate(fromMaybe(tuple2(0, False), load_token).fst));
