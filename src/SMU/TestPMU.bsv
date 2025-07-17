@@ -38,7 +38,7 @@ module mkTestPMU();
         testValues[i] = TaggedTile { t: pack(mat), st: fromInteger(0) };                
     end
     testValues[3].st = fromInteger(1);
-    testValues[NUM_TEST_VALUES - 1].st = fromInteger(2);
+    testValues[valueOf(NUM_TEST_VALUES) - 1].st = fromInteger(2);
 
     // === State tracking ===
     Reg#(Bit#(TLog#(TAdd#(NUM_TEST_VALUES, 2)))) putIndex <- mkReg(0);
