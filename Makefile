@@ -4,8 +4,8 @@
 # ================================================================
 
 # Optional: override default BDPI C source and object
-BDPI_C_SRC ?= dpi/matmul_tile.c
-BDPI_OBJ     ?= dpi/matmul_tile.o
+BDPI_C_SRC ?= dpi/matmul_tile.c dpi/ramulator_wrapper.cpp
+BDPI_OBJ   ?= $(BDPI_C_SRC:.c=.o)
 
 # Add SMU directory to search path
 BSC_PATH1 = src/SMU:

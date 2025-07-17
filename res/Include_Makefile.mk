@@ -44,7 +44,20 @@ b_compile:
 .PHONY: b_link
 b_link: $(BDPI_OBJ)
 	@echo Linking for Bluesim ...
-	bsc -e $(TOPMODULE) -sim -o $(B_SIM_EXE) $(B_SIM_DIRS) $(BSC_LINK_FLAGS) $(BSC_PATHS) $(BDPI_OBJ)
+	bsc -e $(TOPMODULE) -sim \
+		-Xl "-L./ramulator2" \
+		-Xl "-lramulator"    \
+		-Xl "-lstdc++"       \
+		-Xl "-Wl,-rpath,@loader_path/ramulator2"\
+		-Xc++ "-I./ramulator2/ext/spdlog/include" \
+		-Xc++ "-std=c++17" \
+		-Xc++ "-I./ramulator2/ext/yaml-cpp/include" \
+		-Xc++ "-I./ramulator2/src" \
+		-o $(B_SIM_EXE) \
+		$(B_SIM_DIRS) \
+		$(BSC_LINK_FLAGS) \
+		$(BSC_PATHS) \
+		$(BDPI_OBJ)
 	@echo Linking for Bluesim finished
 
 .PHONY: b_sim
@@ -100,10 +113,10 @@ v_sim_vcd:
 ifeq ($(BDPI_C_SRC),)
 # No BDPI C source specified, do nothing
 else
-$(BDPI_OBJ): $(BDPI_C_SRC)
-	@echo Compiling BDPI C source $(BDPI_C_SRC) to object $(BDPI_OBJ)...
-	gcc -c $(BDPI_C_SRC) -o $(BDPI_OBJ)
-	@echo BDPI object built: $(BDPI_OBJ)
+$(BDPI_OBJ): %.o : %.c
+	@echo Compiling $< to $@...
+	gcc -c $< -o $@
+	@echo Built: $@
 endif
 
 # ================================================================
