@@ -6,7 +6,7 @@ import Vector::*;
 import FIFO::*;
 import Parameters::*;
 
-typedef 7 NUM_TEST_VALUES;
+typedef 13 NUM_TEST_VALUES;
 typedef 1 RANK;
 
 // Function to print a tile matrix
@@ -46,17 +46,17 @@ module mkTestPMU();
     Reg#(Bit#(TLog#(TAdd#(NUM_TEST_VALUES, 2)))) valIndex <- mkReg(0);
     Vector#(NUM_TEST_VALUES, Reg#(Tuple2#(Bit#(32), Bool))) tokens <- replicateM(mkReg(tuple2(0, False)));
 
-    Reg#(Bool) started <- mkReg(False);
+    // Reg#(Bool) started <- mkReg(True);
 
-    rule wait_until_ready (!started);
-        if (pmu.ready()) begin
-            $display("[TESTBENCH] PMU is ready.");
-            started <= True;
-        end
-    endrule
+    // rule wait_until_ready (!started);
+    //     if (pmu.ready()) begin
+    //         $display("[TESTBENCH] PMU is ready.");
+    //         started <= True;
+    //     end
+    // endrule
 
     // === Put values ===
-    rule driveInput (started);
+    rule driveInput;
         if (putIndex < fromInteger(valueOf(NUM_TEST_VALUES))) begin 
             pmu.put_data(tagged Tag_Data tuple2(tagged Tag_Tile testValues[putIndex].t, testValues[putIndex].st));
             // $display("Test: Putting value");

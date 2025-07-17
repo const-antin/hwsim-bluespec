@@ -5,24 +5,24 @@ import Types::*;
 import Parameters::*;
 
 interface SetFreeList_IFC;
-    method ActionValue#(Maybe#(SETS_LOG)) allocSet();
-    method Action freeSet(SETS_LOG s);
-    method Bool isSetFree(SETS_LOG s);
+    method ActionValue#(Maybe#(SET_INDEX)) allocSet();
+    method Action freeSet(SET_INDEX s);
+    method Bool isSetFree(SET_INDEX s);
 endinterface
 
 module mkSetFreeList(SetFreeList_IFC);
     Vector#(SETS, Reg#(Bool)) free_sets <- replicateM(mkReg(True));  // All sets initially free (true = free, false = used)
 
     // Simple priority encoder
-    function Maybe#(SETS_LOG) findFree();
-        Maybe#(SETS_LOG) result = Invalid;
+    function Maybe#(SET_INDEX) findFree();
+        Maybe#(SET_INDEX) result = Invalid;
         for (Integer i = 0; i < valueOf(SETS); i = i + 1)
             if (free_sets[i])
                 result = tagged Valid fromInteger(i);
         return result;
     endfunction
 
-    method ActionValue#(Maybe#(SETS_LOG)) allocSet();
+    method ActionValue#(Maybe#(SET_INDEX)) allocSet();
         actionvalue
             let result = findFree();
             if (result matches tagged Valid .idx)
@@ -31,11 +31,11 @@ module mkSetFreeList(SetFreeList_IFC);
         endactionvalue
     endmethod
 
-    method Action freeSet(SETS_LOG s);
+    method Action freeSet(SET_INDEX s);
         free_sets[s] <= True;  
     endmethod
 
-    method Bool isSetFree(SETS_LOG s);
+    method Bool isSetFree(SET_INDEX s);
         return free_sets[s];
     endmethod
 

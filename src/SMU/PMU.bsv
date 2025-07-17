@@ -13,8 +13,8 @@ import Unwrap::*;
 
 // Tracking the current storage location
 typedef struct {
-    SETS_LOG set;
-    FRAMES_PER_SET_LOG frame;
+    SET_INDEX set;
+    FRAME_INDEX frame;
     Bool valid;
 } StorageLocation deriving(Bits, Eq);
 
@@ -22,6 +22,7 @@ typedef struct {
   Vector#(MAX_ENTRIES, StorageLocation) vec;
   UInt#(TLog#(MAX_ENTRIES)) next_idx;
 } TokenMapping deriving (Bits, Eq);
+typedef UInt#(TAdd#(TLog#(SETS), TLog#(FRAMES_PER_SET))) StorageAddr;
 
 interface Operation_IFC;
     method Action put(Int#(32) input_port, ChannelMessage msg);
@@ -57,29 +58,22 @@ module mkPMU#(
     Reg#(Int#(32)) rank <- mkReg(rank_in);
     Reg#(Bit#(TLog#(MAX_ENTRIES))) token_counter <- mkReg(0);
     Reg#(Bit#(32)) cycle_count <- mkReg(0);
-    Vector#(MAX_ENTRIES, ConfigReg#(TokenMapping)) token_table <- replicateM(mkConfigReg(unpack(0)));
+    Vector#(MAX_ENTRIES, ConfigReg#(UInt#(TLog#(MAX_ENTRIES)))) next_idx_table <- replicateM(mkConfigReg(unpack(0)));
+    Vector#(MAX_ENTRIES, RegFile#(StorageAddr, Bit#(SizeOf#(StorageLocation)))) token_storage <- replicateM(mkRegFileWCF(0, fromInteger(valueOf(TMul#(FRAMES_PER_SET, SETS)) - 1)));
+
     let frame_width = valueOf(TLog#(FRAMES_PER_SET));
     let set_width = valueOf(TLog#(SETS));
     Reg#(Maybe#(Tuple2#(Bit#(32), Bool))) load_token <- mkReg(tagged Invalid);
     Reg#(UInt#(TLog#(MAX_ENTRIES))) load_idx <- mkReg(0);
 
     Reg#(Int#(32)) loaded_from_set <- mkReg(0);
-    
-    Reg#(Bool) token_table_initialized <- mkReg(False);
-    rule init_token_table (!token_table_initialized);
-        TokenMapping tm;
-        tm.vec = replicate(StorageLocation { set: 0, frame: 0, valid: False });
-        tm.next_idx = 0;
-        token_table[0] <= tm;
-        token_table_initialized <= True;
-    endrule
 
-    rule cycle_counter (token_table_initialized);
+    rule cycle_counter;
         $display("[CYCLE COUNTER]: %d", cycle_count);
         cycle_count <= cycle_count + 1;
     endrule
 
-    rule store_tile (token_table_initialized);
+    rule store_tile;
         let d_in = data_in.first;
         data_in.deq;
 
@@ -103,7 +97,7 @@ module mkPMU#(
                             mem.write(set, 0, TaggedTile { t: tile, st: st });
                             usage_tracker.setFrame(set, 1);
 
-                            FRAMES_PER_SET_LOG zero_frame = 0;
+                            FRAME_INDEX zero_frame = 0;
                             storage_location = StorageLocation { set: set, frame: 0, valid: True };
                             new_loc = StorageLocation { set: set, frame: 1, valid: True };
                         end
@@ -127,18 +121,13 @@ module mkPMU#(
                     };
                 end
 
-                let tm = token_table[token_counter];
-                tm.vec[tm.next_idx] = storage_location;
-                tm.next_idx = tm.next_idx + 1;
-                token_table[token_counter] <= tm;
+                let idx = next_idx_table[token_counter];
+                token_storage[token_counter].upd(zeroExtend(idx), pack(storage_location));
+                next_idx_table[token_counter] <= idx + 1;
 
                 if (emit_token) begin
                     Bit#(32) token_to_emit = zeroExtend(token_counter);
                     token_counter <= token_counter + 1;
-                    TokenMapping tm;
-                    tm.vec = replicate(StorageLocation { set: 0, frame: 0, valid: False });
-                    tm.next_idx = 0;
-                    token_table[token_counter + 1] <= tm;
                     token_out.enq(tagged Tag_Data tuple2(tagged Tag_Ref tuple2(token_to_emit, False), new_st));
                 end
                 curr_loc <= new_loc;
@@ -155,7 +144,7 @@ module mkPMU#(
     endrule
 
     // Rule to handle token retrievals: find matching value and return it
-    rule start_load_tile (!isValid(load_token) && token_table_initialized);
+    rule start_load_tile (!isValid(load_token));
         let token_msg = token_in.first;
         token_in.deq;
         
@@ -185,13 +174,13 @@ module mkPMU#(
         endcase
     endrule
 
-    rule continue_load_tile (isValid(load_token) && token_table_initialized);
+    rule continue_load_tile (isValid(load_token));
         $display("[DEBUG]: Continuing load tile %d, %d", fromMaybe(tuple2(0, False), load_token).fst, fromMaybe(tuple2(0, False), load_token).snd);
         UInt#(TLog#(MAX_ENTRIES)) token_idx = truncate(unpack(fromMaybe(tuple2(0, False), load_token).fst));
-        let tm = token_table[token_idx];
+        let tm = token_storage[token_idx];
         let deallocate = fromMaybe(tuple2(0, False), load_token).snd;
-        if (load_idx < tm.next_idx) begin
-            let loc = tm.vec[load_idx];
+        if (load_idx < next_idx_table[token_idx]) begin
+            let loc = unpack(tm.sub(zeroExtend(load_idx)));
             let set = loc.set;
             let frame = loc.frame;
             let tile = mem.read(set, frame);
@@ -205,7 +194,7 @@ module mkPMU#(
                     loaded_from_set <= loaded_from_set + 1;
                 end
             end
-            if (load_idx == tm.next_idx - 1) begin
+            if (load_idx == next_idx_table[token_idx] - 1) begin
                 load_token <= tagged Invalid;
                 load_idx <= 0;
             end else begin
@@ -228,9 +217,9 @@ module mkPMU#(
         data_out.deq;
         return data_out.first;
     endmethod
-    method Bool ready();
-        return token_table_initialized;
-    endmethod
+    // method Bool ready();
+    //     return token_table_initialized;
+    // endmethod
 
     interface Operation_IFC operation;
         method Action put(Int#(32) i, ChannelMessage msg); // i = 0 for data, 1 for token
