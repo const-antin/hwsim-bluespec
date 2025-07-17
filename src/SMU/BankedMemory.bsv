@@ -2,6 +2,7 @@ package BankedMemory;
 
 import Vector::*;
 import RegFile::*;
+import ConfigReg::*;
 import Types::*;
 import Parameters::*;
 
@@ -19,28 +20,27 @@ endinterface
 module mkBankedMemory(BankedMemory_IFC);
 
     // tile_banks[frame][row] gives access to the row regfile of a tile in a frame
-    Vector#(FRAMES_PER_SET, Vector#(TILE_SIZE, RegFile#(SETS_LOG, TileRow))) tile_banks <- replicateM(
-        replicateM(mkRegFileFull)
-    );
-    Vector#(FRAMES_PER_SET, RegFile#(SETS_LOG, StopToken)) stop_tokens <- replicateM(mkRegFileFull);
+    Vector#(FRAMES_PER_SET, Vector#(TILE_SIZE, Vector#(SETS, ConfigReg#(TileRow)))) tile_banks <- replicateM(replicateM(replicateM(mkConfigReg(unpack(0)))));
+    Vector#(FRAMES_PER_SET, Vector#(SETS, ConfigReg#(StopToken))) stop_tokens <- replicateM(replicateM(mkConfigReg(unpack(0))));
 
     method Action write(SETS_LOG set, FRAMES_PER_SET_LOG frame, TaggedTile tile);
         Vector#(TILE_SIZE, TileRow) rows = unpack(pack(tile.t));
+        UInt#(TLog#(SETS)) set_int = unpack(set);
         for (Integer i = 0; i < valueOf(TILE_SIZE); i = i + 1)
-            tile_banks[frame][i].upd(set, rows[i]);
-        stop_tokens[frame].upd(set, tile.st);
+            tile_banks[frame][i][set_int] <= rows[i];
+        stop_tokens[frame][set_int] <= tile.st;
     endmethod
 
     method TaggedTile read(SETS_LOG set, FRAMES_PER_SET_LOG frame);
-        function TileRow get_row(RegFile#(SETS_LOG, TileRow) rf);
-            return rf.sub(set);
-        endfunction
-
+        UInt#(TLog#(SETS)) set_int = unpack(set);
 
         TaggedTile result;
-        Vector#(TILE_SIZE, TileRow) rows = map(get_row, tile_banks[frame]);
+        Vector#(TILE_SIZE, TileRow) rows;
+        for (Integer i = 0; i < valueOf(TILE_SIZE); i = i + 1)
+            rows[i] = tile_banks[frame][i][set_int];
+
         result.t = unpack(pack(rows));
-        result.st = stop_tokens[frame].sub(set);
+        result.st = stop_tokens[frame][set_int];
         return result;
     endmethod
 
