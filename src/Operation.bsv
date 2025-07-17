@@ -308,11 +308,17 @@ endmodule
 
 module mkPrinter#(String name) (Operation_IFC);
     FIFO#(ChannelMessage) input_fifo <- mkFIFO;
+    Reg#(Int#(64)) cc <- mkReg(0);
+
     rule print;
         let cur = input_fifo.first;
         input_fifo.deq;
 
-        $display("%s: %s", name, fshow(cur));
+        $display("[cycle %d] %s: %s", cc, name, fshow(cur));
+    endrule
+
+    rule cc_rule;
+        cc <= cc + 1;
     endrule
 
     method Action put(Int#(32) input_port, ChannelMessage msg);
