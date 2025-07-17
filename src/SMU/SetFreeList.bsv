@@ -14,7 +14,7 @@ module mkSetFreeList(SetFreeList_IFC);
     Vector#(SETS, Reg#(Bool)) free_sets <- replicateM(mkReg(True));  // All sets initially free (true = free, false = used)
 
     // Simple priority encoder
-    function Maybe#(SETS_LOG) findFree(Vector#(SETS, Reg#(Bool)) free_sets);
+    function Maybe#(SETS_LOG) findFree();
         Maybe#(SETS_LOG) result = Invalid;
         for (Integer i = 0; i < valueOf(SETS); i = i + 1)
             if (free_sets[i])
@@ -24,7 +24,7 @@ module mkSetFreeList(SetFreeList_IFC);
 
     method ActionValue#(Maybe#(SETS_LOG)) allocSet();
         actionvalue
-            let result = findFree(free_sets);
+            let result = findFree();
             if (result matches tagged Valid .idx)
                 free_sets[idx] <= False;  // Mark as used 
             return result;

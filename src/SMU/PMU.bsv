@@ -63,24 +63,15 @@ module mkPMU#(
     Reg#(Maybe#(Tuple2#(Bit#(32), Bool))) load_token <- mkReg(tagged Invalid);
     Reg#(UInt#(TLog#(MAX_ENTRIES))) load_idx <- mkReg(0);
 
-    Reg#(Int#(32)) num_sets_used <- mkReg(0);
-    Reg#(Int#(32)) num_frames_used <- mkReg(0);
-    Reg#(Int#(32)) num_sets_read <- mkReg(0);
-    Reg#(Int#(32)) num_frames_read <- mkReg(0);
+    Reg#(Int#(32)) loaded_from_set <- mkReg(0);
     
     Reg#(Bool) token_table_initialized <- mkReg(False);
-    Reg#(Bit#(TLog#(MAX_ENTRIES))) init_counter <- mkReg(0);
     rule init_token_table (!token_table_initialized);
         TokenMapping tm;
         tm.vec = replicate(StorageLocation { set: 0, frame: 0, valid: False });
         tm.next_idx = 0;
-        token_table[init_counter] <= tm;
-
-        if (init_counter == fromInteger(valueOf(MAX_ENTRIES) - 1)) begin
-            token_table_initialized <= True;
-        end else begin
-            init_counter <= init_counter + 1;
-        end
+        token_table[0] <= tm;
+        token_table_initialized <= True;
     endrule
 
     rule cycle_counter (token_table_initialized);
@@ -144,6 +135,10 @@ module mkPMU#(
                 if (emit_token) begin
                     Bit#(32) token_to_emit = zeroExtend(token_counter);
                     token_counter <= token_counter + 1;
+                    TokenMapping tm;
+                    tm.vec = replicate(StorageLocation { set: 0, frame: 0, valid: False });
+                    tm.next_idx = 0;
+                    token_table[token_counter + 1] <= tm;
                     token_out.enq(tagged Tag_Data tuple2(tagged Tag_Ref tuple2(token_to_emit, False), new_st));
                 end
                 curr_loc <= new_loc;
@@ -202,9 +197,12 @@ module mkPMU#(
             let tile = mem.read(set, frame);
             data_out.enq(tagged Tag_Data tuple2(tagged Tag_Tile tile.t, tile.st));
             if (deallocate) begin
-                let empty <- usage_tracker.decFrame(set);
-                if (empty) begin
+                let set_count = usage_tracker.getCount(set);
+                if (set_count - 1 == unpack(pack(loaded_from_set))) begin
+                    loaded_from_set <= 0;
                     free_list.freeSet(set); 
+                end else begin
+                    loaded_from_set <= loaded_from_set + 1;
                 end
             end
             if (load_idx == tm.next_idx - 1) begin

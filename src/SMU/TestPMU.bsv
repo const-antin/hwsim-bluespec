@@ -37,7 +37,7 @@ module mkTestPMU();
         mat[1][1] = fromInteger(4*i + 3);
         testValues[i] = TaggedTile { t: pack(mat), st: fromInteger(0) };                
     end
-    testValues[3].st = fromInteger(1);
+    testValues[valueOf(NUM_TEST_VALUES) / 2 - 1].st = fromInteger(1);
     testValues[valueOf(NUM_TEST_VALUES) - 1].st = fromInteger(2);
 
     // === State tracking ===
