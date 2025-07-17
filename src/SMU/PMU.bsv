@@ -4,6 +4,7 @@ import FIFO::*;
 import Types::*;
 import Vector::*;
 import RegFile::*;
+import ConfigReg::*;
 import BankedMemory::*;
 import Parameters::*;
 import SetFreeList::*;
@@ -56,7 +57,7 @@ module mkPMU#(
     Reg#(Int#(32)) rank <- mkReg(rank_in);
     Reg#(Bit#(TLog#(MAX_ENTRIES))) token_counter <- mkReg(0);
     Reg#(Bit#(32)) cycle_count <- mkReg(0);
-    RegFile#(Bit#(TLog#(MAX_ENTRIES)), TokenMapping) token_table <- mkRegFile(0, fromInteger(valueOf(MAX_ENTRIES) - 1));
+    Vector#(MAX_ENTRIES, ConfigReg#(TokenMapping)) token_table <- replicateM(mkConfigReg(unpack(0)));
     let frame_width = valueOf(TLog#(FRAMES_PER_SET));
     let set_width = valueOf(TLog#(SETS));
     Reg#(Maybe#(Tuple2#(Bit#(32), Bool))) load_token <- mkReg(tagged Invalid);
@@ -73,7 +74,7 @@ module mkPMU#(
         TokenMapping tm;
         tm.vec = replicate(StorageLocation { set: 0, frame: 0, valid: False });
         tm.next_idx = 0;
-        token_table.upd(init_counter, tm);
+        token_table[init_counter] <= tm;
 
         if (init_counter == fromInteger(valueOf(MAX_ENTRIES) - 1)) begin
             token_table_initialized <= True;
@@ -135,10 +136,10 @@ module mkPMU#(
                     };
                 end
 
-                let tm = token_table.sub(token_counter);
+                let tm = token_table[token_counter];
                 tm.vec[tm.next_idx] = storage_location;
                 tm.next_idx = tm.next_idx + 1;
-                token_table.upd(token_counter, tm);
+                token_table[token_counter] <= tm;
 
                 if (emit_token) begin
                     Bit#(32) token_to_emit = zeroExtend(token_counter);
@@ -191,7 +192,8 @@ module mkPMU#(
 
     rule continue_load_tile (isValid(load_token) && token_table_initialized);
         $display("[DEBUG]: Continuing load tile %d, %d", fromMaybe(tuple2(0, False), load_token).fst, fromMaybe(tuple2(0, False), load_token).snd);
-        let tm = token_table.sub(truncate(fromMaybe(tuple2(0, False), load_token).fst));
+        UInt#(TLog#(MAX_ENTRIES)) token_idx = truncate(unpack(fromMaybe(tuple2(0, False), load_token).fst));
+        let tm = token_table[token_idx];
         let deallocate = fromMaybe(tuple2(0, False), load_token).snd;
         if (load_idx < tm.next_idx) begin
             let loc = tm.vec[load_idx];
