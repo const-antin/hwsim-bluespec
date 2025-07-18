@@ -10,6 +10,9 @@
 #include <string>
 #include <unordered_map>
 
+
+// ======  Logic to make Ramulator not crash when imported as a library multiple times  ====== 
+
 // Disable spdlog completely before any includes
 #define SPDLOG_DISABLE
 #include <spdlog/spdlog.h>
@@ -17,9 +20,6 @@
 
 // Global flag to track if spdlog has been initialized
 static bool spdlog_initialized = false;
-
-// Global flag to track if ramulator library has been initialized
-static bool ramulator_initialized = false;
 
 // Function to safely initialize spdlog only once
 void initialize_spdlog_safely() {
@@ -49,6 +49,9 @@ void initialize_spdlog_safely() {
     }
 }
 
+// Global flag to track if ramulator library has been initialized
+static bool ramulator_initialized = false;
+
 // Function to safely initialize ramulator library only once
 void initialize_ramulator_safely() {
     if (!ramulator_initialized) {
@@ -61,6 +64,7 @@ void initialize_ramulator_safely() {
         }
     }
 }
+
 
 RamulatorWrapper::RamulatorWrapper(const char *config_path)
     : config_path(config_path) {
@@ -116,11 +120,11 @@ bool RamulatorWrapper::send_request(uint64_t addr, bool is_write) {
         });
 
     if (enqueue_success) {
-      // std::cout << "Request enqueued successfully" << std::endl;
+      std::cout << "Request enqueued successfully" << std::endl;
       // auto &packet = outstandingReads.find(addr)->second;
       std::atomic_fetch_add(&num_outstanding_writes, 1);
     } else {
-      // std::cout << "Request enqueue failed (queue full)" << std::endl;
+      std::cout << "Request enqueue failed (queue full)" << std::endl;
     }
   } else {
     enqueue_success = frontend->receive_external_requests(
@@ -129,11 +133,11 @@ bool RamulatorWrapper::send_request(uint64_t addr, bool is_write) {
           std::atomic_fetch_sub(&num_outstanding_reads, 1);
         });
     if (enqueue_success) {
-      // std::cout << "Request enqueued successfully" << std::endl;
+      std::cout << "Request enqueued successfully" << std::endl;
       // auto &packet = outstandingReads.find(addr)->second;
       std::atomic_fetch_add(&num_outstanding_reads, 1);
     } else {
-      // std::cout << "Request enqueue failed (queue full)" << std::endl;
+      std::cout << "Request enqueue failed (queue full)" << std::endl;
     }
   }
 
@@ -152,81 +156,13 @@ bool RamulatorWrapper::is_finished() {
   // return outgoing_reqs == 0 && frontend->is_finished();
 }
 
-void *ramulator_new(const char *config_path) {
-  auto sim = new RamulatorWrapper(config_path);
-  return sim;
-}
-
-void ramulator_free(void *sim) {
-  auto sim_wrapper = (RamulatorWrapper *)sim;
-  if (sim_wrapper) {
-    delete sim_wrapper;
-  }
-}
-
-bool ramulator_send_request(void *sim, uint64_t addr, bool is_write) {
-  if (!sim) {
-    std::cerr << "Simulator instance is null" << std::endl;
-    return false;
-  }
-  auto sim_wrapper = (RamulatorWrapper *)sim;
-  return sim_wrapper->send_request(addr, is_write);
-}
-
-void ramulator_tick(void *sim) {
-  auto sim_wrapper = (RamulatorWrapper *)sim;
-  if (!sim_wrapper) {
-    std::cerr << "Error: Simulator instance is null" << std::endl;
-    return;
-  }
-  sim_wrapper->tick();
-}
-
-uint64_t ramulator_pop(void *sim) {
-  auto sim_wrapper = (RamulatorWrapper *)sim;
-  if (!sim_wrapper) {
-    std::cerr << "Error: Simulator instance is null" << std::endl;
-    return 0;
-  }
-  return sim_wrapper->pop();
-}
-
-bool ramulator_is_finished(void *sim) {
-  auto sim_wrapper = (RamulatorWrapper *)sim;
-  if (!sim_wrapper) {
-    std::cerr << "Error: Simulator instance is null" << std::endl;
-    return false; // Treat as not finished if invalid
-  }
-
-  return sim_wrapper->is_finished();
-}
-
-float ramulator_get_cycle(void *sim) {
-  auto sim_wrapper = (RamulatorWrapper *)sim;
-  if (!sim_wrapper) {
-    std::cerr << "Error: Simulator instance is null" << std::endl;
-    return 0;
-  }
-
-  return sim_wrapper->get_cycle();
-}
-
-bool ramulator_ret_available(void *sim) {
-  auto sim_wrapper = (RamulatorWrapper *)sim;
-  if (!sim_wrapper) {
-    std::cerr << "Error: Simulator instance is null" << std::endl;
-    return false;
-  }
-
-  return sim_wrapper->return_available();
-}
 
 // Global simulator instance for BDPI functions
 static RamulatorWrapper* global_sim = nullptr;
-static const char* default_config_path = "./ramulator2/example_config_bh.yaml";
+static const char* default_config_path = "./ramulator2/hbm.yaml";
 
 // BDPI functions for Bluespec interface
-void ramulator_wrapper_init(void) {
+void init_ramulator(void) {
   if (global_sim == nullptr) {
     try {
       global_sim = new RamulatorWrapper(default_config_path);
@@ -237,7 +173,7 @@ void ramulator_wrapper_init(void) {
   }
 }
 
-void ramulator_wrapper_free(void) {
+void free_ramulator(void) {
   if (global_sim != nullptr) {
     delete global_sim;
     global_sim = nullptr;
@@ -245,7 +181,7 @@ void ramulator_wrapper_free(void) {
   }
 }
 
-void ramulator_wrapper_send(uint64_t addr, bool is_write) {
+void ramulator_send(uint64_t addr, bool is_write) {
   if (global_sim == nullptr) {
     std::cerr << "Error: Ramulator wrapper not initialized" << std::endl;
     return;
@@ -257,7 +193,7 @@ void ramulator_wrapper_send(uint64_t addr, bool is_write) {
   }
 }
 
-void ramulator_wrapper_tick(void) {
+void ramulator_tick(void) {
   if (global_sim == nullptr) {
     std::cerr << "Error: Ramulator wrapper not initialized" << std::endl;
     return;
@@ -266,31 +202,33 @@ void ramulator_wrapper_tick(void) {
   global_sim->tick();
 }
 
-void ramulator_wrapper_get_cycle(void) {
+uint64_t ramulator_get_cycle(void) {
   if (global_sim == nullptr) {
     std::cerr << "Error: Ramulator wrapper not initialized" << std::endl;
-    return;
+    return -1;
   }
   
   uint64_t cycle = global_sim->get_cycle();
   // Note: In a real implementation, you might want to return this value
   // For now, we just print it
   std::cout << "Current cycle: " << cycle << std::endl;
+  return cycle;
 }
 
-void ramulator_wrapper_ret_available(void) {
+bool ramulator_ret_available(void) {
   if (global_sim == nullptr) {
     std::cerr << "Error: Ramulator wrapper not initialized" << std::endl;
-    return;
+    return false;
   }
   
   bool available = global_sim->return_available();
   // Note: In a real implementation, you might want to return this value
   // For now, we just print it
-  std::cout << "Return available: " << (available ? "true" : "false") << std::endl;
+  // std::cout << "Return available: " << (available ? "true" : "false") << std::endl;
+  return available;
 }
 
-uint64_t ramulator_wrapper_pop(void) {
+uint64_t ramulator_pop(void) {
   if (global_sim == nullptr) {
     std::cerr << "Error: Ramulator wrapper not initialized" << std::endl;
     return 0;
@@ -304,102 +242,11 @@ uint64_t ramulator_wrapper_pop(void) {
   return global_sim->pop();
 }
 
-bool ramulator_wrapper_is_finished(void) {
+bool ramulator_is_finished(void) {
   if (global_sim == nullptr) {
     std::cerr << "Error: Ramulator wrapper not initialized" << std::endl;
     return true; // Treat as finished if not initialized
   }
   
   return global_sim->is_finished();
-}
-
-// Pre-initialized memory storage
-static std::unordered_map<uint64_t, uint8_t> pre_initialized_memory;
-static uint64_t memory_start_addr = 0;
-static uint64_t memory_size = 0;
-
-// Pre-initialized memory functions
-void ramulator_wrapper_init_memory(uint64_t start_addr, uint64_t size, const uint8_t* data) {
-  memory_start_addr = start_addr;
-  memory_size = size;
-  pre_initialized_memory.clear();
-  
-  // Copy the data into our memory map
-  for (uint64_t i = 0; i < size; i++) {
-    pre_initialized_memory[start_addr + i] = data[i];
-  }
-  
-  std::cout << "Pre-initialized memory: " << size << " bytes starting at 0x" 
-            << std::hex << start_addr << std::dec << std::endl;
-}
-
-void ramulator_wrapper_read_memory(uint64_t addr, uint64_t size, uint8_t* buffer) {
-  if (addr < memory_start_addr || addr + size > memory_start_addr + memory_size) {
-    std::cerr << "Error: Memory access out of bounds" << std::endl;
-    return;
-  }
-  
-  for (uint64_t i = 0; i < size; i++) {
-    auto it = pre_initialized_memory.find(addr + i);
-    if (it != pre_initialized_memory.end()) {
-      buffer[i] = it->second;
-    } else {
-      buffer[i] = 0; // Default to 0 for uninitialized memory
-    }
-  }
-}
-
-bool ramulator_wrapper_memory_available(uint64_t addr, uint64_t size) {
-  return (addr >= memory_start_addr && addr + size <= memory_start_addr + memory_size);
-}
-
-// Sequential memory access state
-static uint64_t sequential_start_addr = 0;
-static uint64_t sequential_total_size = 0;
-static uint64_t sequential_request_size = 64;
-static uint64_t sequential_current_offset = 0;
-static bool sequential_initialized = false;
-
-// Sequential memory access functions
-void ramulator_wrapper_init_sequential(uint64_t start_addr, uint64_t total_size, uint64_t request_size) {
-  sequential_start_addr = start_addr;
-  sequential_total_size = total_size;
-  sequential_request_size = request_size;
-  sequential_current_offset = 0;
-  sequential_initialized = true;
-  
-  std::cout << "Sequential access initialized: " << total_size << " bytes starting at 0x" 
-            << std::hex << start_addr << " with " << request_size << " byte requests" << std::dec << std::endl;
-}
-
-uint64_t ramulator_wrapper_get_next_sequential(void) {
-  if (!sequential_initialized) {
-    std::cerr << "Error: Sequential access not initialized" << std::endl;
-    return 0;
-  }
-  
-  if (sequential_current_offset >= sequential_total_size) {
-    std::cerr << "Warning: No more sequential addresses available" << std::endl;
-    return 0;
-  }
-  
-  uint64_t current_addr = sequential_start_addr + sequential_current_offset;
-  sequential_current_offset += sequential_request_size;
-  
-  return current_addr;
-}
-
-bool ramulator_wrapper_sequential_available(void) {
-  if (!sequential_initialized) {
-    return false;
-  }
-  
-  return sequential_current_offset < sequential_total_size;
-}
-
-void ramulator_wrapper_reset_sequential(uint64_t new_start_addr) {
-  sequential_start_addr = new_start_addr;
-  sequential_current_offset = 0;
-  
-  std::cout << "Sequential access reset to address 0x" << std::hex << new_start_addr << std::dec << std::endl;
 }

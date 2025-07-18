@@ -67,53 +67,15 @@ private:
   // std::unordered_map<uint64_t, std::deque<PacketPtr>> outstandingWrites;
 };
 
-// Create a new ramulator simulator instance with the given config file
-void *ramulator_new(const char *config_path);
-
-void *ramulator_new_with_preset(const char *config_content);
-
-// Free a ramulator simulator instance
-void ramulator_free(void *sim);
-
-// Send a memory request to the simulator
-// addr: physical address
-// type: request type (read/write)
-// return: success or error code
-bool ramulator_send_request(void *sim, uint64_t addr, bool is_write);
-
-// Advance the simulation by one cycle
-void ramulator_tick(void *sim);
-
-uint64_t ramulator_pop(void *sim);
-
-// Check if the simulation has finished processing all requests
-bool ramulator_is_finished(void *sim);
-
-// Get the current cycle count
-float ramulator_get_cycle(void *sim);
-
-bool ramulator_ret_available(void *sim);
-
 // BDPI functions for Bluespec interface
-void ramulator_wrapper_init(void);
-void ramulator_wrapper_free(void);
-void ramulator_wrapper_send(uint64_t addr, bool is_write);
-void ramulator_wrapper_tick(void);
-void ramulator_wrapper_get_cycle(void);
-void ramulator_wrapper_ret_available(void);
-uint64_t ramulator_wrapper_pop(void);
-bool ramulator_wrapper_is_finished(void);
-
-// Pre-initialized memory functions
-void ramulator_wrapper_init_memory(uint64_t start_addr, uint64_t size, const uint8_t* data);
-void ramulator_wrapper_read_memory(uint64_t addr, uint64_t size, uint8_t* buffer);
-bool ramulator_wrapper_memory_available(uint64_t addr, uint64_t size);
-
-// Sequential memory access functions
-void ramulator_wrapper_init_sequential(uint64_t start_addr, uint64_t total_size, uint64_t request_size);
-uint64_t ramulator_wrapper_get_next_sequential(void);
-bool ramulator_wrapper_sequential_available(void);
-void ramulator_wrapper_reset_sequential(uint64_t new_start_addr);
+void init_ramulator(void);
+void free_ramulator(void);
+void ramulator_send(uint64_t addr, bool is_write);
+void ramulator_tick(void);
+uint64_t ramulator_get_cycle(void);
+bool ramulator_ret_available(void);
+uint64_t ramulator_pop(void);
+bool ramulator_is_finished(void);
 
 #ifdef __cplusplus
 }
