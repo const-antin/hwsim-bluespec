@@ -113,9 +113,16 @@ v_sim_vcd:
 ifeq ($(BDPI_C_SRC),)
 # No BDPI C source specified, do nothing
 else
-$(BDPI_OBJ): %.o : %.c
+# Handle .c files specifically
+dpi/matmul_tile.o: dpi/matmul_tile.c
 	@echo Compiling $< to $@...
 	gcc -c $< -o $@
+	@echo Built: $@
+
+# Handle .cpp files specifically
+dpi/ramulator_wrapper.o: dpi/ramulator_wrapper.cpp
+	@echo Compiling $< to $@...
+	g++ -c $< -I./ramulator2/ext/spdlog/include -I./ramulator2/ext/yaml-cpp/include -I./ramulator2/src -std=c++17 -o $@
 	@echo Built: $@
 endif
 
