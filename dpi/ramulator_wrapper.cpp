@@ -183,7 +183,7 @@ void free_ramulator(void) {
 
 void ramulator_send(uint64_t addr, bool is_write) {
   if (global_sim == nullptr) {
-    std::cerr << "Error: Ramulator wrapper not initialized" << std::endl;
+    std::cerr << "Error: Ramulator wrapper not initialized (called send before init)" << std::endl;
     return;
   }
   
@@ -195,7 +195,7 @@ void ramulator_send(uint64_t addr, bool is_write) {
 
 void ramulator_tick(void) {
   if (global_sim == nullptr) {
-    std::cerr << "Error: Ramulator wrapper not initialized" << std::endl;
+    std::cerr << "Error: Ramulator wrapper not initialized (called tick before init)" << std::endl;
     return;
   }
   
@@ -204,7 +204,7 @@ void ramulator_tick(void) {
 
 uint64_t ramulator_get_cycle(void) {
   if (global_sim == nullptr) {
-    std::cerr << "Error: Ramulator wrapper not initialized" << std::endl;
+    std::cerr << "Error: Ramulator wrapper not initialized (called get_cycle before init)" << std::endl;
     return -1;
   }
   
@@ -217,7 +217,7 @@ uint64_t ramulator_get_cycle(void) {
 
 bool ramulator_ret_available(void) {
   if (global_sim == nullptr) {
-    std::cerr << "Error: Ramulator wrapper not initialized" << std::endl;
+    // std::cerr << "Error: Ramulator wrapper not initialized (called return_available before init)" << std::endl;
     return false;
   }
   
