@@ -159,7 +159,8 @@ module mkBinaryMap#(function Tile func (Tile tile, Tile tile2)) (Operation_IFC);
             let out = func(tpl_1(current_1).Tag_Tile, tpl_1(current_2).Tag_Tile);
             $display("ST1: %d, ST2: %d, count: %d", tpl_2(current_1), tpl_2(current_2), count);
             if (tpl_2(current_2) != tpl_2(current_1)) begin
-                $display("Stop tokens are not the same, left: %d, right: %d", tpl_2(current_1), tpl_2(current_2));
+                $error("Stop tokens are not the same, left: %d, right: %d", tpl_2(current_1), tpl_2(current_2));
+                $finish;
                 // $finish;
             end
             // dynamicAssert(tpl_2(current_2) == tpl_2(current_1), "Stop tokens must be the same");
@@ -182,7 +183,7 @@ module mkBinaryMap#(function Tile func (Tile tile, Tile tile2)) (Operation_IFC);
     endmethod
 endmodule
 
-module mkPromote#(Integer _rank_unused) (Operation_IFC);
+module mkPromote#(Int#(32) rank) (Operation_IFC);
     FIFO#(ChannelMessage) input_fifo <- mkFIFO;
     FIFO#(ChannelMessage) output_fifo <- mkFIFO;
 
@@ -193,7 +194,8 @@ module mkPromote#(Integer _rank_unused) (Operation_IFC);
         if (cur matches tagged Tag_Data .current) begin
             let data = tpl_1(current);
             let st = tpl_2(current);
-            output_fifo.enq(tagged Tag_Data tuple2(data, st + 1));
+            let st_out = (st >= rank) ? st + 1 : st;
+            output_fifo.enq(tagged Tag_Data tuple2(data, st_out));
         end else begin 
             output_fifo.enq(cur);
         end
