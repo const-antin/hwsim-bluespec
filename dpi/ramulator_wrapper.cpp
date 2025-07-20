@@ -120,7 +120,7 @@ bool RamulatorWrapper::send_request(uint64_t addr, bool is_write) {
         });
 
     if (enqueue_success) {
-      std::cout << "Request enqueued successfully" << std::endl;
+      // std::cout << "Request enqueued successfully" << std::endl;
       // auto &packet = outstandingReads.find(addr)->second;
       std::atomic_fetch_add(&num_outstanding_writes, 1);
     } else {
@@ -133,7 +133,7 @@ bool RamulatorWrapper::send_request(uint64_t addr, bool is_write) {
           std::atomic_fetch_sub(&num_outstanding_reads, 1);
         });
     if (enqueue_success) {
-      std::cout << "Request enqueued successfully" << std::endl;
+      // std::cout << "Request enqueued successfully" << std::endl;
       // auto &packet = outstandingReads.find(addr)->second;
       std::atomic_fetch_add(&num_outstanding_reads, 1);
     } else {
