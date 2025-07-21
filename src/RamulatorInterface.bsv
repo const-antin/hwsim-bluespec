@@ -3,7 +3,7 @@ import FIFO::*;
 // General ramulator functions
 import "BDPI" function Action init_ramulator();
 import "BDPI" function Action free_ramulator();
-import "BDPI" function Action ramulator_send(Bit#(64) addr, Bool is_write);
+import "BDPI" function ActionValue#(Bool) ramulator_send(Bit#(64) addr, Bool is_write);
 import "BDPI" function Action ramulator_tick();
 import "BDPI" function ActionValue#(Bit#(64)) ramulator_get_cycle();
 import "BDPI" function Bool ramulator_ret_available();
@@ -29,9 +29,14 @@ module mkRamulator(Ramulator_IFC);
     endrule
 
     rule send_requests(initialized);
-        ramulator_send(tpl_1(requests.first), tpl_2(requests.first));
-        // $display("Sending request to address: 0x%x at cycle %d", tpl_1(requests.first), cycle_count);
-        requests.deq;
+        let success <- ramulator_send(tpl_1(requests.first), tpl_2(requests.first));
+        if (success) begin
+            // $display("Sending request to address: 0x%x at cycle %d", tpl_1(requests.first), cycle_count);
+            // $display("Sent request to address: 0x%x at cycle %d", tpl_1(requests.first), cycle_count);
+            requests.deq;
+        end else begin 
+            // $display("Failed to send request to ramulator, trying again next cycle");
+        end
     endrule
 
     rule incr_cycle if (initialized);

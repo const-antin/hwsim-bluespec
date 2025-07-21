@@ -70,7 +70,7 @@ private:
 // BDPI functions for Bluespec interface
 void init_ramulator(void);
 void free_ramulator(void);
-void ramulator_send(uint64_t addr, bool is_write);
+bool ramulator_send(uint64_t addr, bool is_write);
 void ramulator_tick(void);
 uint64_t ramulator_get_cycle(void);
 bool ramulator_ret_available(void);

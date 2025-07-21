@@ -124,7 +124,7 @@ bool RamulatorWrapper::send_request(uint64_t addr, bool is_write) {
       // auto &packet = outstandingReads.find(addr)->second;
       std::atomic_fetch_add(&num_outstanding_writes, 1);
     } else {
-      std::cout << "Request enqueue failed (queue full)" << std::endl;
+      // std::cout << "Request enqueue failed (queue full)" << std::endl;
     }
   } else {
     enqueue_success = frontend->receive_external_requests(
@@ -137,7 +137,7 @@ bool RamulatorWrapper::send_request(uint64_t addr, bool is_write) {
       // auto &packet = outstandingReads.find(addr)->second;
       std::atomic_fetch_add(&num_outstanding_reads, 1);
     } else {
-      std::cout << "Request enqueue failed (queue full)" << std::endl;
+      // std::cout << "Request enqueue failed (queue full)" << std::endl;
     }
   }
 
@@ -181,16 +181,17 @@ void free_ramulator(void) {
   }
 }
 
-void ramulator_send(uint64_t addr, bool is_write) {
+bool ramulator_send(uint64_t addr, bool is_write) {
   if (global_sim == nullptr) {
     std::cerr << "Error: Ramulator wrapper not initialized (called send before init)" << std::endl;
-    return;
+    return false;
   }
   
   bool success = global_sim->send_request(addr, is_write);
   if (!success) {
-    std::cerr << "Warning: Failed to send request to ramulator" << std::endl;
+    // std::cerr << "Warning: Failed to send request to ramulator" << std::endl;
   }
+  return success;
 }
 
 void ramulator_tick(void) {
