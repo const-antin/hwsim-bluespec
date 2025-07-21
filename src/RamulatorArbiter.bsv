@@ -4,9 +4,13 @@ import FIFOF::*;
 
 import RamulatorFIFO::*;
 
-interface RamulatorArbiter_IFC #(numeric type num_ports);
+interface RamulatorArbiterIO;
     method Action send_request(Bit#(8) port_id, Bit#(56) addr, Bool is_write);
     method ActionValue#(Bit#(56)) get_response(Bit#(8) port_id);
+endinterface
+
+interface RamulatorArbiter_IFC #(numeric type num_ports);
+    interface RamulatorArbiterIO ports;
 endinterface
 
 module mkRamulatorArbiter#(Integer num_ports) (RamulatorArbiter_IFC#(num_ports));
@@ -63,14 +67,17 @@ module mkRamulatorArbiter#(Integer num_ports) (RamulatorArbiter_IFC#(num_ports))
         responses[port_id].enq(addr);
     endrule
 
-    method Action send_request(Bit#(8) port_id, Bit#(56) addr, Bool is_write);
-        requests[port_id].enq(tuple2(addr, is_write));
-    endmethod 
+    interface RamulatorArbiterIO ports;
+        method Action send_request(Bit#(8) port_id, Bit#(56) addr, Bool is_write);
+            requests[port_id].enq(tuple2(addr, is_write));
+        endmethod 
 
-    method ActionValue#(Bit#(56)) get_response(Bit#(8) port_id);
-        responses[port_id].deq;
-        return responses[port_id].first;
-    endmethod
+        method ActionValue#(Bit#(56)) get_response(Bit#(8) port_id);
+            responses[port_id].deq;
+            return responses[port_id].first;
+        endmethod
+
+    endinterface
 endmodule
 
 module mkRamulatorArbiterTest(Empty);
@@ -92,18 +99,18 @@ module mkRamulatorArbiterTest(Empty);
 
     rule send_request_a if (sent_requests_a < num_requests);
         // $display("Sent a request (a)");
-        arbiter.send_request(0, extend(sent_requests_a), False);
+        arbiter.ports.send_request(0, extend(sent_requests_a), False);
         sent_requests_a <= sent_requests_a + 1;
     endrule
 
     rule send_request_b if (sent_requests_b < num_requests);
         // $display("Sent a request (b)");
-        arbiter.send_request(1, extend(num_requests + sent_requests_b), False);
+        arbiter.ports.send_request(1, extend(num_requests + sent_requests_b), False);
         sent_requests_b <= sent_requests_b + 1;
     endrule
 
     rule get_response_a if (received_responses_a < num_requests);
-        let addr <- arbiter.get_response(0);
+        let addr <- arbiter.ports.get_response(0);
         $display("Response: %d at cycle %d", addr, cycle);
         received_responses_a <= received_responses_a + 1;
         if (addr != extend(received_responses_a)) begin
@@ -113,7 +120,7 @@ module mkRamulatorArbiterTest(Empty);
     endrule
 
     rule get_response_b if (received_responses_b < num_requests);
-        let addr <- arbiter.get_response(1);
+        let addr <- arbiter.ports.get_response(1);
         $display("Response: %d at cycle %d", addr, cycle);
         received_responses_b <= received_responses_b + 1;
         if (addr != extend(num_requests + received_responses_b)) begin

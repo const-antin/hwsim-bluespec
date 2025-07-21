@@ -6,7 +6,7 @@ import FShow::*;
 import FIFO::*;
 import FIFOF::*;
 import RegFile::*;
-import RamulatorInterface::*;
+import RamulatorArbiter::*;
 
 typedef 64 RAMULATOR_DATA_WIDTH;
 
@@ -15,8 +15,12 @@ interface FileReader_IFC#(type entry_type);
     method Bool isDone();
 endinterface
 
-module mkFileReader#(Integer num_entries, String filename) (FileReader_IFC#(entry_type)) provisos (Bits#(entry_type, entry_size));
-    Ramulator_IFC ramulator <- mkRamulator;
+module mkFileReader#(
+    Integer num_entries, 
+    String filename,
+    Bit#(8) index,
+    RamulatorArbiterIO arbiter
+    ) (FileReader_IFC#(entry_type)) provisos (Bits#(entry_type, entry_size));
 
     Reg#(Bit#(64)) read_ptr <- mkReg(0); // Iterates through all addresses in the file
 
@@ -31,13 +35,13 @@ module mkFileReader#(Integer num_entries, String filename) (FileReader_IFC#(entr
     RegFile#(Bit#(64), Bit#(entry_size)) entry_regfile <- mkRegFileLoad(filename, 0, fromInteger(num_entries));
 
     rule read_request if (read_ptr < fromInteger(num_entries) * fromInteger(valueOf(TDiv#(entry_size, 8))));
-        ramulator.send_request(read_ptr, False);
+        arbiter.send_request(index, truncate(read_ptr), False);
         read_ptr <= read_ptr + 8;
     endrule
 
     rule read_response;
-        let response <- ramulator.get_response;
-        response_fifo_vec[response_rr].enq(response);
+        let response <- arbiter.get_response(index);
+        response_fifo_vec[response_rr].enq(extend(response));
         if (response_rr == fromInteger(valueOf(TDiv#(entry_size, RAMULATOR_DATA_WIDTH)))) begin
             response_rr <= 0;
         end else begin
@@ -65,7 +69,8 @@ module mkFileReader#(Integer num_entries, String filename) (FileReader_IFC#(entr
 endmodule
 
 module mkFileReaderTest(Empty);
-    FileReader_IFC#(TaggedTile) reader <- mkFileReader(8, "gen_bsv/address_reader_0.hex");
+    RamulatorArbiter_IFC#(1) arbiter <- mkRamulatorArbiter(1);
+    FileReader_IFC#(TaggedTile) reader <- mkFileReader(8, "gen_bsv/address_reader_0.hex", 0, arbiter.ports);
 
     Reg#(Bit#(64)) cycle_count <- mkReg(0);
 
