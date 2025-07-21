@@ -2,45 +2,55 @@ package BankedMemory;
 
 import Vector::*;
 import RegFile::*;
+import ConfigReg::*;
 import Types::*;
 import Parameters::*;
 
 // === Configuration ===
 
 typedef Bit#(TMul#(TILE_SIZE, SizeOf#(Scalar))) TileRow;
+typedef UInt#(TAdd#(TLog#(SETS), TLog#(FRAMES_PER_SET))) BankAddr;
 
 // === Interface ===
 interface BankedMemory_IFC;
-    method Action write(SETS_LOG set, FRAMES_PER_SET_LOG frame, TaggedTile tile);
-    method TaggedTile read(SETS_LOG set, FRAMES_PER_SET_LOG frame);
+    method Action write(SET_INDEX set, FRAME_INDEX frame, TaggedTile tile);
+    method TaggedTile read(SET_INDEX set, FRAME_INDEX frame);
 endinterface
 
 // === Implementation ===
 module mkBankedMemory(BankedMemory_IFC);
 
-    // tile_banks[frame][row] gives access to the row regfile of a tile in a frame
-    Vector#(FRAMES_PER_SET, Vector#(TILE_SIZE, RegFile#(SETS_LOG, TileRow))) tile_banks <- replicateM(
-        replicateM(mkRegFileFull)
-    );
-    Vector#(FRAMES_PER_SET, RegFile#(SETS_LOG, StopToken)) stop_tokens <- replicateM(mkRegFileFull);
+    // Each bank holds FRAMES_PER_SET * SETS TileRows
+    Vector#(TILE_SIZE, RegFile#(BankAddr, TileRow)) banks <- replicateM(mkRegFileWCF(0, fromInteger(valueOf(MAX_ENTRIES) - 1)));
 
-    method Action write(SETS_LOG set, FRAMES_PER_SET_LOG frame, TaggedTile tile);
+    // Separate storage for StopTokens, shared across all banks
+    RegFile#(BankAddr, StopToken) stop_token_mem <- mkRegFileWCF(0, fromInteger(valueOf(MAX_ENTRIES) - 1));
+
+    // Compute flat address
+    function BankAddr flatAddr(SET_INDEX set, FRAME_INDEX frame);
+        return unpack(zeroExtend(pack(set)) << valueOf(TLog#(FRAMES_PER_SET)) | zeroExtend(pack(frame)));
+    endfunction
+
+    method Action write(SET_INDEX set, FRAME_INDEX frame, TaggedTile tile);
+        BankAddr addr = flatAddr(set, frame);
         Vector#(TILE_SIZE, TileRow) rows = unpack(pack(tile.t));
+
         for (Integer i = 0; i < valueOf(TILE_SIZE); i = i + 1)
-            tile_banks[frame][i].upd(set, rows[i]);
-        stop_tokens[frame].upd(set, tile.st);
+            banks[i].upd(addr, rows[i]);
+
+        stop_token_mem.upd(addr, tile.st);
     endmethod
 
-    method TaggedTile read(SETS_LOG set, FRAMES_PER_SET_LOG frame);
-        function TileRow get_row(RegFile#(SETS_LOG, TileRow) rf);
-            return rf.sub(set);
-        endfunction
+    method TaggedTile read(SET_INDEX set, FRAME_INDEX frame);
+        BankAddr addr = flatAddr(set, frame);
+        Vector#(TILE_SIZE, TileRow) rows;
 
+        for (Integer i = 0; i < valueOf(TILE_SIZE); i = i + 1)
+            rows[i] = banks[i].sub(addr);
 
         TaggedTile result;
-        Vector#(TILE_SIZE, TileRow) rows = map(get_row, tile_banks[frame]);
         result.t = unpack(pack(rows));
-        result.st = stop_tokens[frame].sub(set);
+        result.st = stop_token_mem.sub(addr);
         return result;
     endmethod
 
