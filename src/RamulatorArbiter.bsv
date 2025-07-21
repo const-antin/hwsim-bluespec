@@ -4,16 +4,14 @@ import FIFOF::*;
 
 import RamulatorFIFO::*;
 
-typedef 2 NUM_PORTS;
-
-interface RamulatorArbiter_IFC;
+interface RamulatorArbiter_IFC #(numeric type num_ports);
     method Action send_request(Bit#(8) port_id, Bit#(56) addr, Bool is_write);
     method ActionValue#(Bit#(56)) get_response(Bit#(8) port_id);
 endinterface
 
-module mkRamulatorArbiter (RamulatorArbiter_IFC);
-    Vector#(NUM_PORTS, FIFOF#(Tuple2#(Bit#(56), Bool))) requests <- replicateM(mkFIFOF);
-    Vector#(NUM_PORTS, FIFOF#(Bit#(56))) responses <- replicateM(mkFIFOF);
+module mkRamulatorArbiter#(Integer num_ports) (RamulatorArbiter_IFC#(num_ports));
+    Vector#(num_ports, FIFOF#(Tuple2#(Bit#(56), Bool))) requests <- replicateM(mkFIFOF);
+    Vector#(num_ports, FIFOF#(Bit#(56))) responses <- replicateM(mkFIFOF);
     FIFO#(Tuple2#(Bit#(64), Bool)) ramulator_requests <- mkFIFO;
     FIFO#(Bit#(64)) ramulator_responses <- mkFIFO;
     RamulatorFIFO_IFC ramulator <- mkRamulatorFIFO;
@@ -21,7 +19,7 @@ module mkRamulatorArbiter (RamulatorArbiter_IFC);
     Reg#(Bit#(8)) enqueue_idx <- mkReg(0);
     Wire#(Bit#(8)) next_enqueue_idx <- mkWire;
 
-    for (Integer i = 0; i < valueOf(NUM_PORTS); i = i + 1) begin
+    for (Integer i = 0; i < valueOf(num_ports); i = i + 1) begin
         rule enqueue_requests if (next_enqueue_idx == fromInteger(i));
             if (responses[i].notFull) begin
                 ramulator_requests.enq(
@@ -37,12 +35,12 @@ module mkRamulatorArbiter (RamulatorArbiter_IFC);
 
     rule get_next_enqueue_idx;
         Bool found = False;
-        for (Bit#(8) i = 0; i < fromInteger(valueOf(NUM_PORTS)); i = i + 1) begin
-            let idx = (enqueue_idx + i) % fromInteger(valueOf(NUM_PORTS));
+        for (Bit#(8) i = 0; i < fromInteger(valueOf(num_ports)); i = i + 1) begin
+            let idx = (enqueue_idx + i) % fromInteger(valueOf(num_ports));
             if (requests[idx].notEmpty && !found) begin
                 next_enqueue_idx <= idx;
                 found = True;
-                enqueue_idx <= (idx + 1) % fromInteger(valueOf(NUM_PORTS));
+                enqueue_idx <= (idx + 1) % fromInteger(valueOf(num_ports));
             end
         end
     endrule
@@ -76,7 +74,7 @@ module mkRamulatorArbiter (RamulatorArbiter_IFC);
 endmodule
 
 module mkRamulatorArbiterTest(Empty);
-    RamulatorArbiter_IFC arbiter <- mkRamulatorArbiter;
+    RamulatorArbiter_IFC#(2) arbiter <- mkRamulatorArbiter(2);
 
     let num_requests = 1000;
 
