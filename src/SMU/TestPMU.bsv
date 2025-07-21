@@ -6,7 +6,7 @@ import Vector::*;
 import FIFO::*;
 import Parameters::*;
 
-typedef 13 NUM_TEST_VALUES;
+typedef 123 NUM_TEST_VALUES;
 typedef 1 RANK;
 
 // Function to print a tile matrix

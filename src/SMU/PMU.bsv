@@ -1,6 +1,7 @@
 package PMU;
 
 import FIFO::*;
+import FIFOF::*;
 import Types::*;
 import Vector::*;
 import RegFile::*;
@@ -49,13 +50,15 @@ module mkPMU#(
     Reg#(Int#(32)) rank <- mkReg(rank_in);
     Reg#(Bit#(TLog#(MAX_ENTRIES))) token_counter <- mkReg(0);
     Reg#(Bit#(32)) cycle_count <- mkReg(0);
-    Vector#(MAX_ENTRIES, ConfigReg#(Bit#(TLog#(MAX_ENTRIES)))) next_idx_table <- replicateM(mkConfigReg(unpack(0)));
-    Vector#(MAX_ENTRIES, RegFile#(StorageAddr, Bit#(SizeOf#(StorageLocation)))) token_storage <- replicateM(mkRegFileWCF(0, fromInteger(valueOf(TMul#(FRAMES_PER_SET, SETS)) - 1)));
+
+    RegFile#(Bit#(TLog#(MAX_ENTRIES)), Maybe#(Bit#(TLog#(MAX_ENTRIES)))) first_entry <- mkRegFileWCF(0, fromInteger(valueOf(MAX_ENTRIES) - 1));    
+    Vector#(MAX_ENTRIES, ConfigReg#(Maybe#(Bit#(TLog#(MAX_ENTRIES))))) next_table <- replicateM(mkConfigReg(tagged Invalid));
+    // Vector#(MAX_ENTRIES, ConfigReg#(Bit#(TLog#(MAX_ENTRIES)))) pmu_id_table <- replicateM(mkConfigReg(0)); // TODO: Unused for static
+    Reg#(Bit#(TLog#(MAX_ENTRIES))) prev_stored <- mkReg(0);
 
     let frame_width = valueOf(TLog#(FRAMES_PER_SET));
     let set_width = valueOf(TLog#(SETS));
-    Reg#(Maybe#(Tuple2#(Bit#(32), Bool))) load_token <- mkReg(tagged Invalid);
-    Reg#(Bit#(TLog#(MAX_ENTRIES))) load_idx <- mkReg(0);
+    Reg#(Maybe#(Tuple2#(Bit#(TLog#(MAX_ENTRIES)), Bool))) load_token <- mkReg(tagged Invalid);
 
     Reg#(Int#(32)) loaded_from_set <- mkReg(0);
 
@@ -81,14 +84,17 @@ module mkPMU#(
                 StorageLocation new_loc = curr_loc;
                 StorageLocation storage_location = curr_loc;
 
+                let set = 0;
+                let frame = 0;
+
                 if (!curr_loc.valid) begin
                     let mset <- free_list.allocSet();
                     case (mset) matches
-                        tagged Valid .set: begin
+                        tagged Valid .s: begin
+                            set = s;
+                            frame = 0;
                             mem.write(set, 0, TaggedTile { t: tile, st: st });
                             usage_tracker.setFrame(set, 1);
-
-                            FRAME_INDEX zero_frame = 0;
                             storage_location = StorageLocation { set: set, frame: 0, valid: True };
                             new_loc = StorageLocation { set: set, frame: 1, valid: True };
                         end
@@ -98,8 +104,8 @@ module mkPMU#(
                         end
                     endcase
                 end else begin
-                    let set = curr_loc.set;
-                    let frame = curr_loc.frame;
+                    set = curr_loc.set;
+                    frame = curr_loc.frame;
                     storage_location = curr_loc;
 
                     mem.write(set, frame, TaggedTile { t: tile, st: st });
@@ -112,9 +118,17 @@ module mkPMU#(
                     };
                 end
 
-                let idx = next_idx_table[token_counter];
-                token_storage[token_counter].upd(unpack(zeroExtend(idx)), pack(storage_location));
-                next_idx_table[token_counter] <= idx + 1;
+                if (first_entry.sub(token_counter) matches tagged Invalid) begin
+                    let p = pack({set, frame});
+                    first_entry.upd(token_counter, tagged Valid p);
+                    // pmu_id_table[p] <= 0; // TODO: Dynamic pmu ids
+                    prev_stored <= p;
+                end else begin
+                    let p = pack({set, frame});
+                    next_table[prev_stored] <= tagged Valid p;
+                    prev_stored <= pack({set, frame});
+                    // pmu_id_table[p] <= 0; // TODO: Dynamic pmu ids
+                end
 
                 if (emit_token) begin
                     Bit#(32) token_to_emit = zeroExtend(token_counter);
@@ -142,8 +156,12 @@ module mkPMU#(
         case (token_msg) matches
             tagged Tag_Data {.tt, .st}: begin
                 let token_input = unwrapRef(tt);
-                load_token <= tagged Valid token_input;
-                load_idx <= 0;
+                let maybe_packed_loc = first_entry.sub(truncate(token_input.fst));
+                if (maybe_packed_loc matches tagged Valid .p) begin
+                    load_token <= tagged Valid tuple2(p, token_input.snd);
+                end else begin
+                    load_token <= tagged Invalid;
+                end
             end
             tagged Tag_EndToken .et: begin
                 // Print the state of the memory being used
@@ -166,30 +184,32 @@ module mkPMU#(
     endrule
 
     rule continue_load_tile (isValid(load_token));
-        $display("[DEBUG]: Continuing load tile %d, %d", fromMaybe(tuple2(0, False), load_token).fst, fromMaybe(tuple2(0, False), load_token).snd);
-        UInt#(TLog#(MAX_ENTRIES)) token_idx = truncate(unpack(fromMaybe(tuple2(0, False), load_token).fst));
-        let tm = token_storage[token_idx];
+        let loc_table_entry = fromMaybe(tuple2(0, False), load_token).fst; // {set, frame}
         let deallocate = fromMaybe(tuple2(0, False), load_token).snd;
-        if (load_idx < next_idx_table[token_idx]) begin
-            let loc = unpack(tm.sub(unpack(zeroExtend(load_idx))));
-            let set = loc.set;
-            let frame = loc.frame;
-            let tile = mem.read(set, frame);
-            data_out.enq(tagged Tag_Data tuple2(tagged Tag_Tile tile.t, tile.st));
-            if (deallocate) begin
-                let set_count = usage_tracker.getCount(set);
-                if (set_count - 1 == unpack(pack(loaded_from_set))) begin
-                    loaded_from_set <= 0;
-                    free_list.freeSet(set); 
-                end else begin
-                    loaded_from_set <= loaded_from_set + 1;
-                end
-            end
-            if (load_idx == next_idx_table[token_idx] - 1) begin
-                load_token <= tagged Invalid;
-                load_idx <= 0;
+        SET_INDEX set   = truncate(loc_table_entry >> valueOf(TLog#(FRAMES_PER_SET)));
+        FRAME_INDEX frame = truncate(loc_table_entry);
+        $display("[DEBUG]: Continuing load tile set %d, frame %d, %d", set, frame, deallocate);      
+        let tile = mem.read(set, frame);
+        let out_rank = tile.st;
+
+        // Check if weve processed all entries for this token
+        if (next_table[loc_table_entry] matches tagged Valid .next_loc) begin
+            load_token <= tagged Valid tuple2(next_loc, deallocate);
+        end else begin
+            load_token <= tagged Invalid;
+            out_rank = out_rank + rank;
+        end
+        
+        data_out.enq(tagged Tag_Data tuple2(tagged Tag_Tile tile.t, out_rank));
+
+        if (deallocate) begin
+            next_table[loc_table_entry] <= tagged Invalid;
+            let set_count = usage_tracker.getCount(set);
+            if (set_count - 1 == unpack(pack(loaded_from_set))) begin
+                loaded_from_set <= 0;
+                free_list.freeSet(set); 
             end else begin
-                load_idx <= load_idx + 1;
+                loaded_from_set <= loaded_from_set + 1;
             end
         end
     endrule
