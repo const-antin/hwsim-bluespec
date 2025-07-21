@@ -10,6 +10,7 @@ import Parameters::*;
 import SetFreeList::*;
 import SetUsageTracker::*;
 import Unwrap::*;
+import Operation::*;
 
 // Tracking the current storage location
 typedef struct {
@@ -18,16 +19,7 @@ typedef struct {
     Bool valid;
 } StorageLocation deriving(Bits, Eq);
 
-typedef struct {
-  Vector#(MAX_ENTRIES, StorageLocation) vec;
-  UInt#(TLog#(MAX_ENTRIES)) next_idx;
-} TokenMapping deriving (Bits, Eq);
 typedef UInt#(TAdd#(TLog#(SETS), TLog#(FRAMES_PER_SET))) StorageAddr;
-
-interface Operation_IFC;
-    method Action put(Int#(32) input_port, ChannelMessage msg);
-    method ActionValue#(ChannelMessage) get(Int#(32) output_port);
-endinterface
 
 // Interface that just exposes the modules existence
 interface PMU_IFC;
@@ -37,7 +29,6 @@ interface PMU_IFC;
     method ActionValue#(ChannelMessage) get_token();
     method Action put_token(ChannelMessage msg);
     method ActionValue#(ChannelMessage) get_data();
-    method Bool ready();
 endinterface
 
 
@@ -58,13 +49,13 @@ module mkPMU#(
     Reg#(Int#(32)) rank <- mkReg(rank_in);
     Reg#(Bit#(TLog#(MAX_ENTRIES))) token_counter <- mkReg(0);
     Reg#(Bit#(32)) cycle_count <- mkReg(0);
-    Vector#(MAX_ENTRIES, ConfigReg#(UInt#(TLog#(MAX_ENTRIES)))) next_idx_table <- replicateM(mkConfigReg(unpack(0)));
+    Vector#(MAX_ENTRIES, ConfigReg#(Bit#(TLog#(MAX_ENTRIES)))) next_idx_table <- replicateM(mkConfigReg(unpack(0)));
     Vector#(MAX_ENTRIES, RegFile#(StorageAddr, Bit#(SizeOf#(StorageLocation)))) token_storage <- replicateM(mkRegFileWCF(0, fromInteger(valueOf(TMul#(FRAMES_PER_SET, SETS)) - 1)));
 
     let frame_width = valueOf(TLog#(FRAMES_PER_SET));
     let set_width = valueOf(TLog#(SETS));
     Reg#(Maybe#(Tuple2#(Bit#(32), Bool))) load_token <- mkReg(tagged Invalid);
-    Reg#(UInt#(TLog#(MAX_ENTRIES))) load_idx <- mkReg(0);
+    Reg#(Bit#(TLog#(MAX_ENTRIES))) load_idx <- mkReg(0);
 
     Reg#(Int#(32)) loaded_from_set <- mkReg(0);
 
@@ -122,7 +113,7 @@ module mkPMU#(
                 end
 
                 let idx = next_idx_table[token_counter];
-                token_storage[token_counter].upd(zeroExtend(idx), pack(storage_location));
+                token_storage[token_counter].upd(unpack(zeroExtend(idx)), pack(storage_location));
                 next_idx_table[token_counter] <= idx + 1;
 
                 if (emit_token) begin
@@ -180,7 +171,7 @@ module mkPMU#(
         let tm = token_storage[token_idx];
         let deallocate = fromMaybe(tuple2(0, False), load_token).snd;
         if (load_idx < next_idx_table[token_idx]) begin
-            let loc = unpack(tm.sub(zeroExtend(load_idx)));
+            let loc = unpack(tm.sub(unpack(zeroExtend(load_idx))));
             let set = loc.set;
             let frame = loc.frame;
             let tile = mem.read(set, frame);
@@ -217,9 +208,6 @@ module mkPMU#(
         data_out.deq;
         return data_out.first;
     endmethod
-    // method Bool ready();
-    //     return token_table_initialized;
-    // endmethod
 
     interface Operation_IFC operation;
         method Action put(Int#(32) i, ChannelMessage msg); // i = 0 for data, 1 for token
