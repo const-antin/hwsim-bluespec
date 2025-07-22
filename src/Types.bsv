@@ -3,7 +3,7 @@ package Types;
 import Parameters::*;
 import Vector::*;
 
-typedef Int#(32) StopToken;
+typedef Int#(64) StopToken;
 typedef Int#(32) Scalar;
 
 typedef 16 TILE_SIZE;

@@ -7,6 +7,7 @@ import FIFO::*;
 import FIFOF::*;
 import RegFile::*;
 import RamulatorArbiter::*;
+import Assert::*;
 
 typedef 64 RAMULATOR_DATA_WIDTH;
 
@@ -23,6 +24,7 @@ module mkFileReader#(
     ) (FileReader_IFC#(entry_type)) provisos (Bits#(entry_type, entry_size));
 
     Reg#(Bit#(64)) read_ptr <- mkReg(0); // Iterates through all addresses in the file
+    staticAssert(valueOf(entry_size) % 64 == 0, "entry_size must be a multiple of 64");
 
     // collect 64-bit responses until we have something of entry_size
     Reg#(UInt#(TLog#(TDiv#(entry_size, RAMULATOR_DATA_WIDTH)))) response_rr <- mkReg(0); 
