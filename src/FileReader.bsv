@@ -50,7 +50,7 @@ module mkFileReader#(
         arbiter.send_request(index, truncate(read_ptr), False);
         read_ptr <= read_ptr + 8;
         read_requests_issued <= read_requests_issued + 1;
-        $display("Read request issued: %d", read_requests_issued);
+        // $display("Read request issued: %d", read_requests_issued);
     endrule        
 
     rule read_response;
@@ -62,7 +62,7 @@ module mkFileReader#(
             response_rr <= response_rr + 1;
         end
         read_responses_received <= read_responses_received + 1;
-        $display("Read response received: %d, put into %d", read_responses_received, response_rr);
+        // $display("Read response received: %d, put into %d", read_responses_received, response_rr);
     endrule
 
     function Action dequeue(FIFO#(Bit#(64)) fifo);
@@ -70,7 +70,7 @@ module mkFileReader#(
     endfunction
 
     rule collect;
-        $display("Entry index (Reader %d): %d", index, entry_idx);
+        // $display("Entry index (Reader %d): %d", index, entry_idx);
         output_fifo.enq(unpack(entry_regfile.sub(pack(entry_idx))));
 
         mapM_(dequeue, response_fifo_vec);
