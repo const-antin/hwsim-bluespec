@@ -65,6 +65,8 @@ module mkPMU#(
     Reg#(Bool) initialized <- mkReg(False);
     Reg#(Bit#(TLog#(MAX_ENTRIES))) first_entry_initialized_index <- mkReg(0);
 
+    ConfigReg#(Maybe#(SET_INDEX)) next_free_set <- mkConfigReg(tagged Invalid);
+
     rule initialization (!initialized);
         first_entry.upd(first_entry_initialized_index, tagged Invalid);
         if (first_entry_initialized_index == fromInteger(valueOf(MAX_ENTRIES) - 1)) begin
@@ -75,11 +77,26 @@ module mkPMU#(
     endrule
 
     rule cycle_counter (initialized);
-        $display("[CYCLE COUNTER]: %d", cycle_count);
+        // $display("[CYCLE COUNTER]: %d", cycle_count);
         cycle_count <= cycle_count + 1;
     endrule
 
-    rule store_tile (initialized);
+    rule next_free (initialized && !isValid(next_free_set));
+        let mset <- free_list.allocSet();
+        case (mset) matches
+            tagged Valid .s: begin
+                next_free_set <= tagged Valid s;
+            end
+            default: begin
+                if (cycle_count % 1000 == 0) begin
+                    $display("***** Out of memory at cycle %d *****", cycle_count);
+                end
+                next_free_set <= tagged Invalid;
+            end
+        endcase
+    endrule
+
+    rule store_tile (initialized && (isValid(next_free_set) || curr_loc.valid));
         let d_in = data_in.first;
         data_in.deq;
 
@@ -94,31 +111,21 @@ module mkPMU#(
                 end
 
                 StorageLocation new_loc = curr_loc;
-                StorageLocation storage_location = curr_loc;
 
                 let set = 0;
                 let frame = 0;
 
                 if (!curr_loc.valid) begin
-                    let mset <- free_list.allocSet();
-                    case (mset) matches
-                        tagged Valid .s: begin
-                            set = s;
-                            frame = 0;
-                            mem.write(set, 0, TaggedTile { t: tile, st: st });
-                            usage_tracker.setFrame(set, 1);
-                            storage_location = StorageLocation { set: set, frame: 0, valid: True };
-                            new_loc = StorageLocation { set: set, frame: 1, valid: True };
-                        end
-                        default: begin
-                            $display("***** Out of memory *****");
-                            $finish;
-                        end
-                    endcase
+                    set = next_free_set.Valid;
+                    frame = 0;
+                    mem.write(set, 0, TaggedTile { t: tile, st: st });
+                    usage_tracker.setFrame(set, 1);
+                    new_loc = StorageLocation { set: set, frame: 1, valid: True };
+                    next_free_set <= tagged Invalid;
                 end else begin
+                    $display("[DEBUG]: Storing tile in set %d, frame %d", curr_loc.set, curr_loc.frame);
                     set = curr_loc.set;
                     frame = curr_loc.frame;
-                    storage_location = curr_loc;
 
                     mem.write(set, frame, TaggedTile { t: tile, st: st });
                     let full <- usage_tracker.incFrame(set);
@@ -138,14 +145,17 @@ module mkPMU#(
                 end else begin
                     let p = pack({set, frame});
                     next_table[prev_stored] <= tagged Valid p;
-                    prev_stored <= pack({set, frame});
+                    if (prev_stored != p) begin
+                        next_table[p] <= tagged Invalid;
+                    end
+                    prev_stored <= p;
                     // pmu_id_table[p] <= 0; // TODO: Dynamic pmu ids
                 end
 
                 if (emit_token) begin
                     Bit#(32) token_to_emit = zeroExtend(token_counter);
                     token_counter <= token_counter + 1;
-                    token_out.enq(tagged Tag_Data tuple2(tagged Tag_Ref tuple2(token_to_emit, False), new_st));
+                    token_out.enq(tagged Tag_Data tuple2(tagged Tag_Ref tuple2(token_to_emit, True), new_st));
                 end
                 curr_loc <= new_loc;
             end
@@ -196,9 +206,9 @@ module mkPMU#(
     endrule
 
     rule continue_load_tile (isValid(load_token));
-        let loc_table_entry = tpl_1(fromMaybe(tuple3(0, False, 0), load_token)); // {set, frame}
-        let deallocate = tpl_2(fromMaybe(tuple3(0, False, 0), load_token));
-        let st = tpl_3(fromMaybe(tuple3(0, False, 0), load_token));
+        let loc_table_entry = tpl_1(load_token.Valid); // {set, frame}
+        let deallocate = tpl_2(load_token.Valid);
+        let st = tpl_3(load_token.Valid);
         SET_INDEX set   = truncate(loc_table_entry >> valueOf(TLog#(FRAMES_PER_SET)));
         FRAME_INDEX frame = truncate(loc_table_entry);
         $display("[DEBUG]: Continuing load tile set %d, frame %d, %d", set, frame, deallocate);      
@@ -210,19 +220,21 @@ module mkPMU#(
             load_token <= tagged Valid tuple3(next_loc, deallocate, st);
         end else begin
             load_token <= tagged Invalid;
-            out_rank = out_rank + st;
+            out_rank = rank + st;
         end
         
         data_out.enq(tagged Tag_Data tuple2(tagged Tag_Tile tile.t, out_rank));
 
         if (deallocate) begin
-            next_table[loc_table_entry] <= tagged Invalid;
+            // next_table[loc_table_entry] <= tagged Invalid;
             let set_count = usage_tracker.getCount(set);
             if (set_count - 1 == unpack(pack(loaded_from_set))) begin
                 loaded_from_set <= 0;
                 free_list.freeSet(set); 
+                $display("[DEBUG]: Freed set %d", set);
             end else begin
                 loaded_from_set <= loaded_from_set + 1;
+                $display("[DEBUG]: Loaded frame %dfrom set", loaded_from_set);
             end
         end
     endrule

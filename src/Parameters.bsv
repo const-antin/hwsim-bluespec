@@ -12,7 +12,7 @@ typedef 4 NUM_OUTPUTS_PER_PMU;
 
 typedef 4 NUM_STAGES;
 
-typedef 4 FRAMES_PER_SET;
+typedef 8 FRAMES_PER_SET;
 typedef TLog#(FRAMES_PER_SET) FRAMES_PER_SET_LOG;
 typedef Bit#(FRAMES_PER_SET_LOG) FRAME_INDEX;
 typedef 16 SETS;
