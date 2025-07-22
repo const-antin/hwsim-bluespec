@@ -7,25 +7,32 @@ import SpecialFIFOs::*;
 import RegFile::*;
 import Vector::*;
 import RamulatorInterface::*;
+import Parameters::*;
 
 interface RamulatorFIFO_IFC;
     method Action send_request(Bit#(64) addr, Bool is_write);
     method ActionValue#(Bit#(64)) get_response();
 endinterface
 
-typedef 8 NUM_IN_FLIGHT;
-typedef Bit#(TLog#(NUM_IN_FLIGHT)) Tag;
+typedef RAMULATOR_REORDER_WINDOW_SIZE REORDER_WINDOW_SIZE;
+typedef Bit#(TLog#(REORDER_WINDOW_SIZE)) Tag;
 
 module mkRamulatorFIFO(RamulatorFIFO_IFC);
+    Reg#(Bit#(32)) cycle <- mkReg(0);
+
     FIFO#(Tuple2#(Bit#(64), Bool)) in <- mkFIFO;
-    FIFO#(Bit#(64)) out <- mkFIFO;
+    FIFOF#(Bit#(64)) out <- mkFIFOF;
     Ramulator_IFC ramulator <- mkRamulator;
 
-    Vector#(NUM_IN_FLIGHT, FIFOF#(Bit#(64))) requests <- replicateM(mkSizedFIFOF(1));
-    FIFO#(Bit#(64)) in_flight <- mkSizedFIFO(valueOf(NUM_IN_FLIGHT));
+    Vector#(REORDER_WINDOW_SIZE, Reg#(Maybe#(Bit#(64)))) requests <- replicateM(mkReg(tagged Invalid));
+    FIFO#(Bit#(64)) in_flight <- mkSizedFIFO(valueOf(REORDER_WINDOW_SIZE));
     
-    Wire#(Bit#(TLog#(NUM_IN_FLIGHT))) next_location <- mkWire;
-    Wire#(Bit#(TLog#(NUM_IN_FLIGHT))) free_location <- mkWire;
+    Wire#(Bit#(TLog#(REORDER_WINDOW_SIZE))) next_location <- mkWire;
+    Wire#(Bit#(TLog#(REORDER_WINDOW_SIZE))) free_location <- mkWire;
+
+    rule cc;
+        cycle <= cycle + 1;
+    endrule
 
     rule put_req;
         let addr = tpl_1(in.first);
@@ -36,43 +43,57 @@ module mkRamulatorFIFO(RamulatorFIFO_IFC);
         // $display("Sent request to ramulator: 0x%x", addr);
     endrule
 
+    function Bool not_full(Reg#(Maybe#(Bit#(64))) maybe_val);
+        return (maybe_val matches tagged Invalid ? True : False);
+    endfunction
+
     rule find_free;
-        Bool found = False;
-        for (Integer i = 0; i < fromInteger(valueOf(NUM_IN_FLIGHT)); i = i + 1) begin
-            if (requests[i].notFull && !found) begin
-                free_location <= fromInteger(i);
-                found = True;
-            end
+        let position = findIndex(not_full, requests);
+        if (position matches tagged Valid .p) begin
+            free_location <= pack(p);
         end
     endrule 
 
     rule get_resp;
         let response <- ramulator.get_response();
-        // $display("Ramulator response: 0x%x, enqueing to location %d", response, free_location);
-        requests[free_location].enq(response);
+        // $display("Ramulator response: 0x%x, enqueing to location %d. Requests rn: ", response, free_location, fshow(requests));
+        requests[free_location] <= tagged Valid response;
         // $display("Enqueued the response for 0x%x", response);
     endrule
 
+    function Bool is_next_response(Bit#(64) addr, Reg#(Maybe#(Bit#(64))) maybe_val);
+        return (maybe_val matches tagged Valid .v ? (addr == v) : False);
+    endfunction
+
     rule find_next;
-        Bool found = False;
-        for (Integer i = 0; i < fromInteger(valueOf(NUM_IN_FLIGHT)); i = i + 1) begin
-            if (requests[i].notEmpty && requests[i].first == in_flight.first && !found) begin
-                next_location <= fromInteger(i);
-                // $display("Found the response for 0x%x", in_flight.first, fshow(requests));
-                found = True;
-            end
-        end
-        if (!found) begin
-            // $error("Did not find the response for 0x%x", in_flight.first, fshow(requests));
+        let position = findIndex(is_next_response(in_flight.first), requests);
+        if (position matches tagged Valid .p) begin
+            $display("Found the response for 0x%x", in_flight.first);
+            next_location <= pack(p);
         end
     endrule
 
     rule drain_next;
-        let response = requests[next_location].first;
-        requests[next_location].deq;
+        let response = requests[next_location].Valid;
+        requests[next_location] <= tagged Invalid;
         in_flight.deq;
-        // $display("Drained the response for 0x%x", in_flight.first);
+        $display("Drained the response for 0x%x", in_flight.first);
         out.enq(response);
+    endrule
+
+    rule reorder_buffer_full;
+        Int#(32) full = 0;
+        for (Integer i = 0; i < fromInteger(valueOf(REORDER_WINDOW_SIZE)); i = i + 1) begin
+            if (requests[i] matches tagged Valid ._) begin
+                full = full + 1;
+            end
+        end
+        if (full == fromInteger(valueOf(REORDER_WINDOW_SIZE))) begin
+            $display("Reorder buffer is full at cycle %d", cycle);
+            $display("The output buffer is blocking? ", !out.notFull);
+            $display("in out, we currently have: ", fshow(out.first));
+            $finish(0);
+        end
     endrule
 
     method Action send_request(Bit#(64) addr, Bool is_write);
@@ -81,6 +102,7 @@ module mkRamulatorFIFO(RamulatorFIFO_IFC);
     endmethod
     
     method ActionValue#(Bit#(64)) get_response();
+        // $display("Sent out response for 0x%x at cycle %d", out.first, cycle);
         out.deq;
         // $display("Dequeued the response for 0x%x", out.first);
         return out.first;
@@ -91,13 +113,19 @@ endmodule
 module mkRamulatorFIFOTest(Empty);
     Reg#(Int#(32)) sent <- mkReg(0);
     Reg#(Int#(32)) received <- mkReg(0);
+    Reg#(Int#(32)) cc <- mkReg(0);
     
-    Int#(32) num_elements = 10000;
+    Int#(32) num_elements = 128;
     RamulatorFIFO_IFC fifo_ram <- mkRamulatorFIFO;
     
     rule send if (sent < num_elements);
         fifo_ram.send_request(zeroExtend(pack(sent)) << 8, False);
         sent <= sent + 1;
+    endrule
+
+    rule print_status;
+        // $display("Sent: %d, Received: %d, Cycle: %d", sent, received, cc);
+        cc <= cc + 1;
     endrule
 
     rule receive if (received < num_elements);
@@ -106,6 +134,7 @@ module mkRamulatorFIFOTest(Empty);
             received <= received + 1;
         end else begin
             $error("Received the wrong response for 0x%x", response);
+            $finish(0);
         end
     endrule
 
@@ -113,4 +142,11 @@ module mkRamulatorFIFOTest(Empty);
         $display("SUCCESS");
         $finish(0);
     endrule
+
+    // rule error;
+    //     if (cc > 1000) begin
+    //         $display("FAILED");
+    //         $finish(0);
+    //     end
+    // endrule
 endmodule

@@ -18,6 +18,8 @@ endinterface
 
 module mkRamulator(Ramulator_IFC);
     Reg#(Bit#(64)) cycle_count <- mkReg(0);
+    Reg#(Bit#(64)) bubbles <- mkReg(0);
+    
     Reg#(Bool) initialized <- mkReg(False);
     Reg#(Bool) finished <- mkReg(False);
     FIFO#(Tuple2#(Bit#(64), Bool)) requests <- mkFIFO;
@@ -28,6 +30,7 @@ module mkRamulator(Ramulator_IFC);
         initialized <= True;
     endrule
 
+    (* preempts = "send_requests, bubble_input" *)
     rule send_requests(initialized);
         let success <- ramulator_send(tpl_1(requests.first), tpl_2(requests.first));
         if (success) begin
@@ -39,17 +42,29 @@ module mkRamulator(Ramulator_IFC);
         end
     endrule
 
+    rule bubble_input if (initialized);
+        $error("Ramulator could have loaded data at cycle %d", cycle_count);
+        $error("But no request was input.");
+    endrule
+
     rule incr_cycle if (initialized);
         cycle_count <= cycle_count + 1;
         ramulator_tick();
     endrule
 
+    (* preempts = "drain, bubble" *)
     rule drain if (initialized);
         if (ramulator_ret_available()) begin
             let addr <- ramulator_pop();
             // $display("Received return for address: 0x%x at cycle %d", addr, cycle_count);
             responses.enq(addr);
         end
+    endrule
+
+    rule bubble if (initialized &&& ramulator_ret_available());
+        bubbles <= bubbles + 1;
+        $error("Pipeline bubble (blocked output) at cycle %d", cycle_count);
+        $error("Bubbles: %d", bubbles);
     endrule
 
     method Action send_request(Bit#(64) addr, Bool is_write) if (initialized);
@@ -74,7 +89,7 @@ module mkRamulatorTest(Empty);
 
     rule get_responses if (received < 10);
         let response <- ramulator.get_response();
-        $display("Received response: 0x%x", response);
+        // $display("Received response: 0x%x", response);
         received <= received + 1;
     endrule
 

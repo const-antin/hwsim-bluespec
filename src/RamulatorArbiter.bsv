@@ -14,8 +14,14 @@ interface RamulatorArbiter_IFC #(numeric type num_ports);
 endinterface
 
 module mkRamulatorArbiter#(Integer num_ports) (RamulatorArbiter_IFC#(num_ports));
+
+    Reg#(Bit#(32)) cycle <- mkReg(0);
+
     Vector#(num_ports, FIFOF#(Tuple2#(Bit#(56), Bool))) requests <- replicateM(mkFIFOF);
-    Vector#(num_ports, FIFOF#(Bit#(56))) responses <- replicateM(mkFIFOF);
+    
+    Vector#(num_ports, FIFOF#(Bit#(56))) responses_to_world <- replicateM(mkSizedFIFOF(4)); // These two fifos are split to make detecting a fill-up threshold possible.
+    Vector#(num_ports, FIFOF#(Bit#(56))) responses_buffer <- replicateM(mkSizedFIFOF(8)); // This one only is to catch in-flight responses when the output suddenly blocks. 
+
     FIFO#(Tuple2#(Bit#(64), Bool)) ramulator_requests <- mkFIFO;
     FIFO#(Bit#(64)) ramulator_responses <- mkFIFO;
     RamulatorFIFO_IFC ramulator <- mkRamulatorFIFO;
@@ -25,7 +31,8 @@ module mkRamulatorArbiter#(Integer num_ports) (RamulatorArbiter_IFC#(num_ports))
 
     for (Integer i = 0; i < valueOf(num_ports); i = i + 1) begin
         rule enqueue_requests if (next_enqueue_idx == fromInteger(i));
-            if (responses[i].notFull) begin
+            if (!responses_buffer[i].notEmpty) begin
+                $display("We find it absolutely fine to enqueue request from port %d", i);
                 ramulator_requests.enq(
                     tuple2(
                         {fromInteger(i), tpl_1(requests[i].first)},
@@ -36,6 +43,10 @@ module mkRamulatorArbiter#(Integer num_ports) (RamulatorArbiter_IFC#(num_ports))
             end
         endrule
     end
+
+    rule cc;
+        cycle <= cycle + 1;
+    endrule
 
     rule get_next_enqueue_idx;
         Bool found = False;
@@ -59,13 +70,27 @@ module mkRamulatorArbiter#(Integer num_ports) (RamulatorArbiter_IFC#(num_ports))
         ramulator_responses.enq(response);
     endrule
 
+    (* preempts = "dequeue_responses, drain_idle" *)
     rule dequeue_responses;
         let response = ramulator_responses.first;
         ramulator_responses.deq;
+        $display("Dequeued ramulator response for 0x%x at cycle %d", response, cycle);
         let port_id = response[63:56];
         let addr = response[55:0];
-        responses[port_id].enq(addr);
+        responses_buffer[port_id].enq(addr);
     endrule
+
+    rule drain_idle;
+        $display("Draining idle at cycle %d", cycle);
+        $display("Response in pipeline: ", fshow(ramulator_responses.first));
+    endrule
+
+    for (Integer i = 0; i < valueOf(num_ports); i = i + 1) begin
+        rule drain_responses_buffer;
+            responses_to_world[i].enq(responses_buffer[i].first);
+            responses_buffer[i].deq;
+        endrule
+    end
 
     interface RamulatorArbiterIO ports;
         method Action send_request(Bit#(8) port_id, Bit#(56) addr, Bool is_write);
@@ -73,8 +98,8 @@ module mkRamulatorArbiter#(Integer num_ports) (RamulatorArbiter_IFC#(num_ports))
         endmethod 
 
         method ActionValue#(Bit#(56)) get_response(Bit#(8) port_id);
-            responses[port_id].deq;
-            return responses[port_id].first;
+            responses_to_world[port_id].deq;
+            return responses_to_world[port_id].first;
         endmethod
 
     endinterface

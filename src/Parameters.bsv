@@ -18,4 +18,6 @@ typedef 128 SETS;
 typedef Bit#(TLog#(SETS)) SETS_LOG;
 typedef TMul#(FRAMES_PER_SET, SETS) MAX_ENTRIES;
 
+typedef 64 RAMULATOR_REORDER_WINDOW_SIZE;
+
 endpackage
