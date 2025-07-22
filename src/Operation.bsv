@@ -72,7 +72,7 @@ module mkRepeatStatic#(Int#(32) num_repeats) (Operation_IFC);
                 if (to_send matches tagged Tag_Ref .r) begin
                     to_send = tagged Tag_Ref tuple2(tpl_1(r), False);
                 end
-                cur = tagged Tag_Data tuple2(to_send, tpl_2(current) + 1);
+                cur = tagged Tag_Data tuple2(to_send, 0);
             end
         end
 
@@ -159,7 +159,8 @@ module mkBinaryMap#(function Tile func (Tile tile, Tile tile2)) (Operation_IFC);
             let out = func(tpl_1(current_1).Tag_Tile, tpl_1(current_2).Tag_Tile);
             $display("ST1: %d, ST2: %d, count: %d", tpl_2(current_1), tpl_2(current_2), count);
             if (tpl_2(current_2) != tpl_2(current_1)) begin
-                $display("Stop tokens are not the same, left: %d, right: %d", tpl_2(current_1), tpl_2(current_2));
+                $error("Stop tokens are not the same, left: %d, right: %d", tpl_2(current_1), tpl_2(current_2));
+                $finish;
                 // $finish;
             end
             // dynamicAssert(tpl_2(current_2) == tpl_2(current_1), "Stop tokens must be the same");
@@ -182,7 +183,7 @@ module mkBinaryMap#(function Tile func (Tile tile, Tile tile2)) (Operation_IFC);
     endmethod
 endmodule
 
-module mkPromote#(Integer _rank_unused) (Operation_IFC);
+module mkPromote#(Int#(32) rank) (Operation_IFC);
     FIFO#(ChannelMessage) input_fifo <- mkFIFO;
     FIFO#(ChannelMessage) output_fifo <- mkFIFO;
 
@@ -193,7 +194,8 @@ module mkPromote#(Integer _rank_unused) (Operation_IFC);
         if (cur matches tagged Tag_Data .current) begin
             let data = tpl_1(current);
             let st = tpl_2(current);
-            output_fifo.enq(tagged Tag_Data tuple2(data, st + 1));
+            let st_out = (st >= rank) ? st + 1 : st;
+            output_fifo.enq(tagged Tag_Data tuple2(data, st_out));
         end else begin 
             output_fifo.enq(cur);
         end
@@ -303,6 +305,31 @@ module mkTileReader#(Integer num_entries, String filename) (Operation_IFC);
 
     method Action put(Int#(32) input_port, ChannelMessage msg);
         $error("TileReader does not support put");
+    endmethod
+endmodule
+
+module mkPrinter#(String name) (Operation_IFC);
+    FIFO#(ChannelMessage) input_fifo <- mkFIFO;
+    Reg#(Int#(64)) cc <- mkReg(0);
+
+    rule print;
+        let cur = input_fifo.first;
+        input_fifo.deq;
+
+        $display("[cycle %d] %s: %s", cc, name, fshow(cur));
+    endrule
+
+    rule cc_rule;
+        cc <= cc + 1;
+    endrule
+
+    method Action put(Int#(32) input_port, ChannelMessage msg);
+        input_fifo.enq(msg);
+    endmethod
+
+    method ActionValue#(ChannelMessage) get(Int#(32) output_port);
+        $error("Printer does not support get");
+        return ?;
     endmethod
 endmodule
 

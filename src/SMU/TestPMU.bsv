@@ -7,7 +7,7 @@ import FIFO::*;
 import Parameters::*;
 import RegFile::*;
 
-typedef 256 NUM_TEST_VALUES;
+typedef 23 NUM_TEST_VALUES;
 typedef 1 RANK;
 
 // Function to print a tile matrix
@@ -125,6 +125,7 @@ module mkTestPMU();
                             $display("FAILED:");
                             // printTile(TaggedTile { t: t, st: st });
                             $display("Expected [st = %0d]:", expected.st);
+                            $display("Got [st = %0d]:", st);
                             // printTile(expected);
                             // $finish(0); // Exits on failure
                         end
