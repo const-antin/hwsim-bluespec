@@ -58,16 +58,28 @@ module mkPMU#(
 
     let frame_width = valueOf(TLog#(FRAMES_PER_SET));
     let set_width = valueOf(TLog#(SETS));
-    Reg#(Maybe#(Tuple2#(Bit#(TLog#(MAX_ENTRIES)), Bool))) load_token <- mkReg(tagged Invalid);
+    Reg#(Maybe#(Tuple3#(Bit#(TLog#(MAX_ENTRIES)), Bool, StopToken))) load_token <- mkReg(tagged Invalid);
 
     Reg#(Int#(32)) loaded_from_set <- mkReg(0);
 
-    rule cycle_counter;
+    Reg#(Bool) initialized <- mkReg(False);
+    Reg#(Bit#(TLog#(MAX_ENTRIES))) first_entry_initialized_index <- mkReg(0);
+
+    rule initialization (!initialized);
+        first_entry.upd(first_entry_initialized_index, tagged Invalid);
+        if (first_entry_initialized_index == fromInteger(valueOf(MAX_ENTRIES) - 1)) begin
+            initialized <= True; 
+        end else begin
+            first_entry_initialized_index <= first_entry_initialized_index + 1;
+        end
+    endrule
+
+    rule cycle_counter (initialized);
         $display("[CYCLE COUNTER]: %d", cycle_count);
         cycle_count <= cycle_count + 1;
     endrule
 
-    rule store_tile;
+    rule store_tile (initialized);
         let d_in = data_in.first;
         data_in.deq;
 
@@ -158,7 +170,7 @@ module mkPMU#(
                 let token_input = unwrapRef(tt);
                 let maybe_packed_loc = first_entry.sub(truncate(token_input.fst));
                 if (maybe_packed_loc matches tagged Valid .p) begin
-                    load_token <= tagged Valid tuple2(p, token_input.snd);
+                    load_token <= tagged Valid tuple3(p, token_input.snd, st);
                 end else begin
                     load_token <= tagged Invalid;
                 end
@@ -184,8 +196,9 @@ module mkPMU#(
     endrule
 
     rule continue_load_tile (isValid(load_token));
-        let loc_table_entry = fromMaybe(tuple2(0, False), load_token).fst; // {set, frame}
-        let deallocate = fromMaybe(tuple2(0, False), load_token).snd;
+        let loc_table_entry = tpl_1(fromMaybe(tuple3(0, False, 0), load_token)); // {set, frame}
+        let deallocate = tpl_2(fromMaybe(tuple3(0, False, 0), load_token));
+        let st = tpl_3(fromMaybe(tuple3(0, False, 0), load_token));
         SET_INDEX set   = truncate(loc_table_entry >> valueOf(TLog#(FRAMES_PER_SET)));
         FRAME_INDEX frame = truncate(loc_table_entry);
         $display("[DEBUG]: Continuing load tile set %d, frame %d, %d", set, frame, deallocate);      
@@ -194,10 +207,10 @@ module mkPMU#(
 
         // Check if weve processed all entries for this token
         if (next_table[loc_table_entry] matches tagged Valid .next_loc) begin
-            load_token <= tagged Valid tuple2(next_loc, deallocate);
+            load_token <= tagged Valid tuple3(next_loc, deallocate, st);
         end else begin
             load_token <= tagged Invalid;
-            out_rank = out_rank + rank;
+            out_rank = out_rank + st;
         end
         
         data_out.enq(tagged Tag_Data tuple2(tagged Tag_Tile tile.t, out_rank));
