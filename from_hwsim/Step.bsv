@@ -5,13 +5,16 @@ import Types::*;
 import Vector::*;
 import FShow::*;
 import Debug::*;
+import RamulatorArbiter::*;
 
 module mkStep(Empty);
-    let mod_0_inner <- mkTileReader(2048, "gen_bsv/address_reader_0.hex");
+    RamulatorArbiter_IFC#(4) ramulator_arbiter <- mkRamulatorArbiter(4);
+
+    let mod_0_inner <- mkTileReader(2048, "gen_bsv/address_reader_0.hex", 0, ramulator_arbiter.ports);
     let mod_0 <- mkDebugOperation(mod_0_inner, "mod_0");
-    let mod_1_inner <- mkTileReader(2048, "gen_bsv/address_reader_1.hex");
+    let mod_1_inner <- mkTileReader(2048, "gen_bsv/address_reader_1.hex", 1, ramulator_arbiter.ports);
     let mod_1 <- mkDebugOperation(mod_1_inner, "mod_1");
-    let mod_2_inner <- mkTileReader(2048, "gen_bsv/address_reader_2.hex");
+    let mod_2_inner <- mkTileReader(2048, "gen_bsv/address_reader_2.hex", 2, ramulator_arbiter.ports);
     let mod_2 <- mkDebugOperation(mod_2_inner, "mod_2");
     let mod_3_inner <- mkBroadcast2();
     let mod_3 <- mkDebugOperation(mod_3_inner, "mod_3");
@@ -59,8 +62,8 @@ module mkStep(Empty);
     let mod_21 <- mkDebugOperation(mod_21_inner, "mod_21");
     let mod_22_inner <- mkPromote(3);
     let mod_22 <- mkDebugOperation(mod_22_inner, "mod_22");
-    let mod_23_inner <- mkTileReader(2048, "gen_bsv/address_reader_12.hex");
-    let mod_23 <- mkDebugOperation(mod_23_inner, "mod_23");
+    // let mod_23_inner <- mkTileReader(2048, "gen_bsv/address_reader_12.hex", 3, ramulator_arbiter.ports);
+    // let mod_23 <- mkDebugOperation(mod_23_inner, "mod_23");
     let mod_24_inner <- mkRepeatStatic(1);
     let mod_24 <- mkDebugOperation(mod_24_inner, "mod_24");
     Bufferize#(2, 1) mod_25_bufferize <- mkSimpleBufferize(1, 2, 1);
@@ -173,8 +176,8 @@ module mkStep(Empty);
         mod_5.put(0, t);
     endrule
     rule rule_23;
-        let t <- mod_23.get(0);
-        mod_25.put(0, t);
+        // let t <- mod_23.get(0);
+        // mod_25.put(0, t);
     endrule
     rule rule_24;
         let t <- mod_30.get(1);
@@ -190,7 +193,8 @@ module mkStep(Empty);
     endrule
     rule rule_27;
         let t <- mod_10.get(1);
-        mod_20.put(0, t);
+        $display("Output of first part: %d", t);
+        // mod_20.put(0, t);
     endrule
     rule rule_28;
         let t <- mod_14.get(0);

@@ -1,4 +1,5 @@
 import FIFO::*;
+import Parameters::*;
 
 // General ramulator functions
 import "BDPI" function Action init_ramulator();
@@ -42,7 +43,7 @@ module mkRamulator(Ramulator_IFC);
         end
     endrule
 
-    rule bubble_input if (initialized);
+    rule bubble_input if (initialized &&& valueOf(RAMULATOR_PRINT_BUBBLES) == 1);
         $error("Ramulator could have loaded data at cycle %d", cycle_count);
         $error("But no request was input.");
     endrule
@@ -61,7 +62,7 @@ module mkRamulator(Ramulator_IFC);
         end
     endrule
 
-    rule bubble if (initialized &&& ramulator_ret_available());
+    rule bubble if (initialized &&& ramulator_ret_available() &&& valueOf(RAMULATOR_PRINT_BUBBLES) == 1);
         bubbles <= bubbles + 1;
         $error("Pipeline bubble (blocked output) at cycle %d", cycle_count);
         $error("Bubbles: %d", bubbles);

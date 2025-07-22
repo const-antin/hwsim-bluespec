@@ -68,7 +68,7 @@ module mkRamulatorFIFO(RamulatorFIFO_IFC);
     rule find_next;
         let position = findIndex(is_next_response(in_flight.first), requests);
         if (position matches tagged Valid .p) begin
-            $display("Found the response for 0x%x", in_flight.first);
+            // $display("Found the response for 0x%x", in_flight.first);
             next_location <= pack(p);
         end
     endrule
@@ -77,9 +77,13 @@ module mkRamulatorFIFO(RamulatorFIFO_IFC);
         let response = requests[next_location].Valid;
         requests[next_location] <= tagged Invalid;
         in_flight.deq;
-        $display("Drained the response for 0x%x", in_flight.first);
+        // $display("Drained the response for 0x%x", in_flight.first);
         out.enq(response);
     endrule
+
+    function Fmt get_value(Reg#(Maybe#(Bit#(64))) maybe_val);
+        return (maybe_val matches tagged Valid .v ? fshow(v) : fshow("Invalid"));
+    endfunction
 
     rule reorder_buffer_full;
         Int#(32) full = 0;
@@ -89,9 +93,11 @@ module mkRamulatorFIFO(RamulatorFIFO_IFC);
             end
         end
         if (full == fromInteger(valueOf(REORDER_WINDOW_SIZE))) begin
+            let elements = map(get_value, requests);
             $display("Reorder buffer is full at cycle %d", cycle);
             $display("The output buffer is blocking? ", !out.notFull);
             $display("in out, we currently have: ", fshow(out.first));
+            $display("The reorder buffer is: ", fshow(elements));
             $finish(0);
         end
     endrule
