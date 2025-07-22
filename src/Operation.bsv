@@ -158,7 +158,7 @@ module mkBinaryMap#(function Tile func (Tile tile, Tile tile2)) (Operation_IFC);
 
         if (cur_1 matches tagged Tag_Data .current_1 &&& cur_2 matches tagged Tag_Data .current_2) begin
             let out = func(tpl_1(current_1).Tag_Tile, tpl_1(current_2).Tag_Tile);
-            $display("ST1: %d, ST2: %d, count: %d", tpl_2(current_1), tpl_2(current_2), count);
+            // $display("ST1: %d, ST2: %d, count: %d", tpl_2(current_1), tpl_2(current_2), count);
             if (tpl_2(current_2) != tpl_2(current_1)) begin
                 $error("Stop tokens are not the same, left: %d, right: %d", tpl_2(current_1), tpl_2(current_2));
                 $finish;

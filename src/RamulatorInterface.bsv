@@ -19,7 +19,8 @@ endinterface
 
 module mkRamulator(Ramulator_IFC);
     Reg#(Bit#(64)) cycle_count <- mkReg(0);
-    Reg#(Bit#(64)) bubbles <- mkReg(0);
+    Reg#(Bit#(64)) input_bubbles <- mkReg(0);
+    Reg#(Bit#(64)) output_bubbles <- mkReg(0);
     
     Reg#(Bool) initialized <- mkReg(False);
     Reg#(Bool) finished <- mkReg(False);
@@ -44,8 +45,9 @@ module mkRamulator(Ramulator_IFC);
     endrule
 
     rule bubble_input if (initialized &&& valueOf(RAMULATOR_PRINT_BUBBLES) == 1);
+        input_bubbles <= input_bubbles + 1;
         $error("Ramulator could have loaded data at cycle %d", cycle_count);
-        $error("But no request was input.");
+        $error("But no request was input. Ramulator input idle for: %d/%d cycles", input_bubbles+1, cycle_count);
     endrule
 
     rule incr_cycle if (initialized);
@@ -63,9 +65,9 @@ module mkRamulator(Ramulator_IFC);
     endrule
 
     rule bubble if (initialized &&& ramulator_ret_available() &&& valueOf(RAMULATOR_PRINT_BUBBLES) == 1);
-        bubbles <= bubbles + 1;
+        output_bubbles <= output_bubbles + 1;
         $error("Pipeline bubble (blocked output) at cycle %d", cycle_count);
-        $error("Bubbles: %d", bubbles);
+        $error("Output blocked for: %d/%d cycles", output_bubbles+1, cycle_count);
     endrule
 
     method Action send_request(Bit#(64) addr, Bool is_write) if (initialized);
