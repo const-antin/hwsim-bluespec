@@ -3,6 +3,7 @@ package SetFreeList;
 import Vector::*;
 import Types::*;
 import Parameters::*;
+import ConfigReg::*;
 
 interface SetFreeList_IFC;
     method ActionValue#(Maybe#(SET_INDEX)) allocSet();
@@ -11,7 +12,7 @@ interface SetFreeList_IFC;
 endinterface
 
 module mkSetFreeList(SetFreeList_IFC);
-    Vector#(SETS, Reg#(Bool)) free_sets <- replicateM(mkReg(True));  // All sets initially free (true = free, false = used)
+    Vector#(SETS, ConfigReg#(Bool)) free_sets <- replicateM(mkConfigReg(True));  // All sets initially free (true = free, false = used)
 
     // Simple priority encoder
     function Maybe#(SET_INDEX) findFree();

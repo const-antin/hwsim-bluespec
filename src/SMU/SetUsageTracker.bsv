@@ -18,7 +18,7 @@ module mkSetUsageTracker(SetUsageTracker_IFC);
         let count = usage[s];
         let new_count = count + 1;
         usage[s] <= new_count;
-        return count + 1 == fromInteger(valueOf(FRAMES_PER_SET));
+        return count + 1 >= fromInteger(valueOf(FRAMES_PER_SET));
     endmethod
 
     method Action setFrame(SET_INDEX s, UInt#(32) count);

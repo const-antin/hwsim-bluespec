@@ -60,8 +60,6 @@ module mkPMU#(
     let set_width = valueOf(TLog#(SETS));
     Reg#(Maybe#(Tuple3#(Bit#(TLog#(MAX_ENTRIES)), Bool, StopToken))) load_token <- mkReg(tagged Invalid);
 
-    Reg#(Int#(32)) loaded_from_set <- mkReg(0);
-
     Reg#(Bool) initialized <- mkReg(False);
     Reg#(Bit#(TLog#(MAX_ENTRIES))) first_entry_initialized_index <- mkReg(0);
 
@@ -81,6 +79,7 @@ module mkPMU#(
         cycle_count <= cycle_count + 1;
     endrule
 
+    (* execution_order = "store_tile, next_free" *)
     rule next_free (initialized && !isValid(next_free_set));
         let mset <- free_list.allocSet();
         case (mset) matches
@@ -89,7 +88,7 @@ module mkPMU#(
             end
             default: begin
                 if (cycle_count % 1000 == 0) begin
-                    $display("***** Out of memory at cycle %d *****", cycle_count);
+                    $display("***** Out of memory at cycle %d, load token validity is %d *****", cycle_count, isValid(load_token));
                 end
                 next_free_set <= tagged Invalid;
             end
@@ -97,6 +96,7 @@ module mkPMU#(
     endrule
 
     rule store_tile (initialized && (isValid(next_free_set) || curr_loc.valid));
+        $display("[DEBUG]: Storing tile at cycle %d", cycle_count);
         let d_in = data_in.first;
         data_in.deq;
 
@@ -122,6 +122,7 @@ module mkPMU#(
                     usage_tracker.setFrame(set, 1);
                     new_loc = StorageLocation { set: set, frame: 1, valid: True };
                     next_free_set <= tagged Invalid;
+                    $display("[DEBUG]: !curr_loc.valid: tile in set %d, frame %d", set, frame);
                 end else begin
                     $display("[DEBUG]: Storing tile in set %d, frame %d", curr_loc.set, curr_loc.frame);
                     set = curr_loc.set;
@@ -129,6 +130,9 @@ module mkPMU#(
 
                     mem.write(set, frame, TaggedTile { t: tile, st: st });
                     let full <- usage_tracker.incFrame(set);
+                    $display("[DEBUG]: full before: %d", full);
+                    full = full || emit_token;
+                    $display("[DEBUG]: full: %d", full);
 
                     new_loc = StorageLocation {
                         set: set,
@@ -181,8 +185,10 @@ module mkPMU#(
                 let maybe_packed_loc = first_entry.sub(truncate(token_input.fst));
                 if (maybe_packed_loc matches tagged Valid .p) begin
                     load_token <= tagged Valid tuple3(p, token_input.snd, st);
+                    $display("[DEBUG]: starting load tile at cycle %d, load_token %d", cycle_count, tpl_1(load_token.Valid));
                 end else begin
-                    load_token <= tagged Invalid;
+                    $display("[ERROR]: No valid location found for token %d", token_input.fst);
+                    $finish(0);
                 end
             end
             tagged Tag_EndToken .et: begin
@@ -211,31 +217,27 @@ module mkPMU#(
         let st = tpl_3(load_token.Valid);
         SET_INDEX set   = truncate(loc_table_entry >> valueOf(TLog#(FRAMES_PER_SET)));
         FRAME_INDEX frame = truncate(loc_table_entry);
-        $display("[DEBUG]: Continuing load tile set %d, frame %d, %d", set, frame, deallocate);      
         let tile = mem.read(set, frame);
         let out_rank = tile.st;
 
         // Check if weve processed all entries for this token
+        let next_set = set + 1;
         if (next_table[loc_table_entry] matches tagged Valid .next_loc) begin
+            next_set = truncate(next_loc >> valueOf(TLog#(FRAMES_PER_SET)));
             load_token <= tagged Valid tuple3(next_loc, deallocate, st);
         end else begin
             load_token <= tagged Invalid;
             out_rank = rank + st;
         end
         
+        $display("[DEBUG]: Cycle %d: Continuing load tile set %d, next_set %d, frame %d, deallocate: %d, out_rank %d", cycle_count, set, next_set, frame, deallocate, out_rank);      
         data_out.enq(tagged Tag_Data tuple2(tagged Tag_Tile tile.t, out_rank));
 
         if (deallocate) begin
-            // next_table[loc_table_entry] <= tagged Invalid;
-            let set_count = usage_tracker.getCount(set);
-            if (set_count - 1 == unpack(pack(loaded_from_set))) begin
-                loaded_from_set <= 0;
+            if (set != next_set) begin
                 free_list.freeSet(set); 
                 $display("[DEBUG]: Freed set %d", set);
-            end else begin
-                loaded_from_set <= loaded_from_set + 1;
-                $display("[DEBUG]: Loaded frame %dfrom set", loaded_from_set);
-            end
+            end 
         end
     endrule
 
