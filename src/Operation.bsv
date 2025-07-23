@@ -119,7 +119,7 @@ module mkBroadcast2 (Operation_IFC);
     endmethod
 endmodule
 
-module mkUnaryMap#(function Tile func (Tile tile)) (Operation_IFC);
+module mkUnaryMap#(Integer id, function Tile func (Tile tile)) (Operation_IFC);
     FIFO#(ChannelMessage) input_fifo <- mkFIFO;
     FIFO#(ChannelMessage) output_fifo <- mkFIFO;
 
@@ -143,7 +143,7 @@ module mkUnaryMap#(function Tile func (Tile tile)) (Operation_IFC);
     endmethod
 endmodule
 
-module mkBinaryMap#(function Tile func (Tile tile, Tile tile2)) (Operation_IFC);
+module mkBinaryMap#(Integer id, function Tile func (Tile tile, Tile tile2)) (Operation_IFC);
     FIFO#(ChannelMessage) input_fifo1 <- mkFIFO;
     FIFO#(ChannelMessage) input_fifo2 <- mkFIFO;
     FIFO#(ChannelMessage) output_fifo <- mkFIFO;
@@ -160,7 +160,7 @@ module mkBinaryMap#(function Tile func (Tile tile, Tile tile2)) (Operation_IFC);
             let out = func(tpl_1(current_1).Tag_Tile, tpl_1(current_2).Tag_Tile);
             // $display("ST1: %d, ST2: %d, count: %d", tpl_2(current_1), tpl_2(current_2), count);
             if (tpl_2(current_2) != tpl_2(current_1)) begin
-                $error("Stop tokens are not the same, left: %d, right: %d", tpl_2(current_1), tpl_2(current_2));
+                $error("Map %d: Stop tokens are not the same, left: %d, right: %d", id, tpl_2(current_1), tpl_2(current_2));
                 $finish;
                 // $finish;
             end
@@ -316,13 +316,13 @@ module mkPrinter#(String name) (Operation_IFC);
     rule print;
         let cur = input_fifo.first;
         input_fifo.deq;
+        
+        $display("[cycle %d] %s: %s", cc, name, fshow(cur));
 
         if (tpl_2(cur.Tag_Data) == 5) begin // Hardcoded for Gina's application.
             $display("Finished at cycle %d", cc);
             $finish;
         end
-
-        $display("[cycle %d] %s: %s", cc, name, fshow(cur));
     endrule
 
     rule cc_rule;
@@ -338,77 +338,4 @@ module mkPrinter#(String name) (Operation_IFC);
         return ?;
     endmethod
 endmodule
-
-module mkTop(Empty);
-    let m1 <- mkBinaryMap(matmul_t_tile);
-    let m2 <- mkBinaryMap(matmul_t_tile);
-
-    let a1 <- mkAccum(add_tile, 1);
-    let a2 <- mkAccum(add_tile, 1);
-
-    let m3 <- mkBinaryMap(mul_tile);
-    let m4 <- mkUnaryMap(silu_tile);
-
-    let p5 <- mkPromote(0);
-
-    let m6 <- mkBinaryMap(matmul_t_tile);
-    let a7 <- mkAccum(add_tile, 1);
-
-    rule stimulus;
-        let tile = 5;
-        let msg = tagged Tag_Data tuple2(tagged Tag_Tile tile, 5);
-        m1.put(0, msg);
-        m1.put(1, msg);
-        m2.put(0, msg);
-        m2.put(1, msg);
-        m6.put(1, msg);
-    endrule
-
-    rule pass_m1;
-        let msg <- m1.get(0);
-        a1.put(0, msg);
-    endrule
-
-    rule pass_m2;
-        let msg <- m2.get(0);
-        a2.put(0, msg);
-    endrule
-
-    rule pass_a1;
-        let msg <- a1.get(0);
-        m3.put(0, msg);
-    endrule
-
-    rule pass_a2;
-        let msg <- a2.get(0);
-        m4.put(0, msg);
-    endrule
-
-    rule pass_m4;
-        let msg <- m4.get(0);
-        m3.put(1, msg);
-    endrule
-
-    rule pass_m3;
-        let msg <- m3.get(0);
-        p5.put(0, msg);
-    endrule
-
-    rule pass_p5;
-        let msg <- p5.get(0);
-        m6.put(0, msg);
-    endrule
-
-    rule pass_m6;
-        let msg <- m6.get(0);
-        a7.put(0, msg);
-    endrule
-
-    rule drain;
-        let msg <- a7.get(0);
-        $display("Message: %s", fshow(msg));
-        $finish;
-    endrule
-endmodule
-
 endpackage

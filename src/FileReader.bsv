@@ -89,7 +89,7 @@ endmodule
 
 module mkFileReaderTest(Empty);
     RamulatorArbiter_IFC#(1) arbiter <- mkRamulatorArbiter(1);
-    FileReader_IFC#(TaggedTile) reader <- mkFileReader(128, "gen_bsv/address_reader_0.hex", 0, arbiter.ports);
+    FileReader_IFC#(TaggedTile) reader <- mkFileReader(2048, "step_paper_0/address_reader_12.hex", 0, arbiter.ports);
 
     Reg#(Bit#(64)) cycle_count <- mkReg(0);
 

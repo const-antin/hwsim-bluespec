@@ -25,6 +25,6 @@ typedef 0 RAMULATOR_PRINT_BUBBLES; // 0: no printing, 1: print bubbles
 
 typedef 0 PRINT_DEBUG_OPERATION; // 0: no printing, 1: print debug operation
 
-typedef 0 USE_RAMULATOR;
+typedef 1 USE_RAMULATOR;
 
 endpackage
