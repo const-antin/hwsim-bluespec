@@ -317,6 +317,11 @@ module mkPrinter#(String name) (Operation_IFC);
         let cur = input_fifo.first;
         input_fifo.deq;
 
+        if (tpl_2(cur.Tag_Data) == 5) begin // Hardcoded for Gina's application.
+            $display("Finished at cycle %d", cc);
+            $finish;
+        end
+
         $display("[cycle %d] %s: %s", cc, name, fshow(cur));
     endrule
 

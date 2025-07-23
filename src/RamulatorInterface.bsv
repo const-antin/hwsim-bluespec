@@ -33,7 +33,7 @@ module mkRamulator(Ramulator_IFC);
     endrule
 
     (* preempts = "send_requests, bubble_input" *)
-    rule send_requests(initialized);
+    rule send_requests(initialized &&& valueOf(USE_RAMULATOR) == 1);
         let success <- ramulator_send(tpl_1(requests.first), tpl_2(requests.first));
         if (success) begin
             // $display("Sending request to address: 0x%x at cycle %d", tpl_1(requests.first), cycle_count);
@@ -56,12 +56,17 @@ module mkRamulator(Ramulator_IFC);
     endrule
 
     (* preempts = "drain, bubble" *)
-    rule drain if (initialized);
+    rule drain if (initialized &&& valueOf(USE_RAMULATOR) == 1);
         if (ramulator_ret_available()) begin
             let addr <- ramulator_pop();
             // $display("Received return for address: 0x%x at cycle %d", addr, cycle_count);
             responses.enq(addr);
         end
+    endrule
+
+    rule bypass if (valueOf(USE_RAMULATOR) == 0);
+        responses.enq(tpl_1(requests.first));
+        requests.deq;
     endrule
 
     rule bubble if (initialized &&& ramulator_ret_available() &&& valueOf(RAMULATOR_PRINT_BUBBLES) == 1);

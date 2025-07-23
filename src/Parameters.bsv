@@ -23,4 +23,8 @@ typedef TMul#(FRAMES_PER_SET, SETS) MAX_ENTRIES;
 typedef 64 RAMULATOR_REORDER_WINDOW_SIZE;
 typedef 0 RAMULATOR_PRINT_BUBBLES; // 0: no printing, 1: print bubbles
 
+typedef 0 PRINT_DEBUG_OPERATION; // 0: no printing, 1: print debug operation
+
+typedef 0 USE_RAMULATOR;
+
 endpackage
