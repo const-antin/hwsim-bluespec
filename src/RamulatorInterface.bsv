@@ -32,7 +32,7 @@ module mkRamulator(Ramulator_IFC);
         initialized <= True;
     endrule
 
-    (* preempts = "send_requests, bubble_input" *)
+    (* preempts = "(send_requests, bypass), bubble_input" *)
     rule send_requests(initialized &&& valueOf(USE_RAMULATOR) == 1);
         let success <- ramulator_send(tpl_1(requests.first), tpl_2(requests.first));
         if (success) begin
@@ -89,19 +89,25 @@ module mkRamulatorTest(Empty);
     Ramulator_IFC ramulator <- mkRamulator;
     Reg#(Int#(32)) sent <- mkReg(0);
     Reg#(Int#(32)) received <- mkReg(0);
+    Reg#(Bit#(64)) cycle_count <- mkReg(0);
 
-    rule send_requests if (sent < 10);
+    rule send_requests if (sent < 1024);
         ramulator.send_request(zeroExtend(pack(sent) << 8), False);
         sent <= sent + 1;
     endrule
 
-    rule get_responses if (received < 10);
+    rule get_responses if (received < 1024);
         let response <- ramulator.get_response();
         // $display("Received response: 0x%x", response);
         received <= received + 1;
     endrule
 
-    rule finish if (received == 10);
+    rule incr_cycle;
+        cycle_count <= cycle_count + 1;
+    endrule
+
+    rule finish if (received == 1024);
+        $display("Read all data at cycle %d", cycle_count);
         $finish;
     endrule
 endmodule

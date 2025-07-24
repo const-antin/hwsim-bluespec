@@ -19,10 +19,10 @@ module mkRamulatorArbiter#(Integer num_ports) (RamulatorArbiter_IFC#(num_ports))
 
     Vector#(num_ports, FIFOF#(Tuple2#(Bit#(56), Bool))) requests <- replicateM(mkFIFOF);
     
-    Vector#(num_ports, FIFOF#(Bit#(56))) responses_to_world <- replicateM(mkSizedFIFOF(4)); // These two fifos are split to make detecting a fill-up threshold possible.
-    Vector#(num_ports, FIFOF#(Bit#(56))) responses_buffer <- replicateM(mkSizedFIFOF(32)); // This one only is to catch in-flight responses when the output suddenly blocks. 
+    Vector#(num_ports, FIFOF#(Bit#(56))) responses_to_world <- replicateM(mkSizedFIFOF(64)); // These two fifos are split to make detecting a fill-up threshold possible.
+    Vector#(num_ports, FIFOF#(Bit#(56))) responses_buffer <- replicateM(mkSizedFIFOF(64)); // This one only is to catch in-flight responses when the output suddenly blocks. 
 
-    FIFO#(Tuple2#(Bit#(64), Bool)) ramulator_requests <- mkFIFO;
+    FIFOF#(Tuple2#(Bit#(64), Bool)) ramulator_requests <- mkFIFOF;
     FIFO#(Bit#(64)) ramulator_responses <- mkFIFO;
     RamulatorFIFO_IFC ramulator <- mkRamulatorFIFO;
 
@@ -30,8 +30,9 @@ module mkRamulatorArbiter#(Integer num_ports) (RamulatorArbiter_IFC#(num_ports))
     Wire#(Bit#(8)) next_enqueue_idx <- mkWire;
 
     for (Integer i = 0; i < valueOf(num_ports); i = i + 1) begin
+        (* preempts = "enqueue_requests, nothing" *)
         rule enqueue_requests if (next_enqueue_idx == fromInteger(i));
-            if (!responses_buffer[i].notEmpty) begin
+            if (responses_to_world[i].notFull) begin
                 // $display("We find it absolutely fine to enqueue request from port %d", i);
                 ramulator_requests.enq(
                     tuple2(
@@ -40,9 +41,23 @@ module mkRamulatorArbiter#(Integer num_ports) (RamulatorArbiter_IFC#(num_ports))
                     )
                 );
                 requests[i].deq;
+            end else begin 
+                $display("responses buffer not empty, thats why we don't enqueue.", i);
             end
         endrule
+
+        rule nothing;
+            let rq = requests[i].first;
+            let t = responses_to_world[i].notFull;
+            let ram_empty = ramulator_requests.notFull;
+            // $display("Nothing to do at cycle %d. not full? %d, ramulator empty? %d, request: %d", cycle, t, ram_empty, rq);
+        endrule
     end
+
+    rule requests_empty;
+        let rq = requests[0].first;
+        // $display("Request: %d at cc %d", rq, cycle);
+    endrule 
 
     rule cc;
         cycle <= cycle + 1;
@@ -136,7 +151,7 @@ module mkRamulatorArbiterTest(Empty);
 
     rule get_response_a if (received_responses_a < num_requests);
         let addr <- arbiter.ports.get_response(0);
-        $display("Response: %d at cycle %d", addr, cycle);
+        // $display("Response: %d at cycle %d", addr, cycle);
         received_responses_a <= received_responses_a + 1;
         if (addr != extend(received_responses_a)) begin
             $display("Error: Response %d does not match expected response %d", addr, received_responses_a);
@@ -155,6 +170,42 @@ module mkRamulatorArbiterTest(Empty);
     endrule
 
     rule exit if (received_responses_a == num_requests && received_responses_b == num_requests);
+        $display("SUCCESS at cycle %d", cycle);
+        $finish(0);
+    endrule
+endmodule
+
+module mkRamulatorArbiterSinglePortTest(Empty);
+    RamulatorArbiter_IFC#(1) arbiter <- mkRamulatorArbiter(1);
+
+    let num_requests = 32;
+
+    Reg#(Bit#(32)) sent_requests <- mkReg(0);
+    Reg#(Bit#(32)) received_responses <- mkReg(0);
+
+    Reg#(Bit#(32)) cycle <- mkReg(0);
+
+    rule cc;
+        cycle <= cycle + 1;
+    endrule
+    
+    rule send_request if (sent_requests < num_requests);
+        arbiter.ports.send_request(0, extend(sent_requests), False);
+        sent_requests <= sent_requests + 1;
+    endrule
+
+    rule get_response if (received_responses < num_requests);
+        let addr <- arbiter.ports.get_response(0);
+        $display("Response: %d at cycle %d", addr, cycle);
+        received_responses <= received_responses + 1;
+        if (addr != extend(received_responses)) begin
+            $display("Error: Response %d does not match expected response %d", addr, received_responses);
+            $finish(1);
+        end
+    endrule
+
+    rule exit if (received_responses == num_requests);
+        $display("SUCCESS at cycle %d", cycle);
         $finish(0);
     endrule
 endmodule

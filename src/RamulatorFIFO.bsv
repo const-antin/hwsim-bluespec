@@ -121,7 +121,7 @@ module mkRamulatorFIFOTest(Empty);
     Reg#(Int#(32)) received <- mkReg(0);
     Reg#(Int#(32)) cc <- mkReg(0);
     
-    Int#(32) num_elements = 128;
+    Int#(32) num_elements = 256;
     RamulatorFIFO_IFC fifo_ram <- mkRamulatorFIFO;
     
     rule send if (sent < num_elements);
