@@ -5,7 +5,6 @@ import Vector::*;
 import FIFO::*;
 import FIFOF::*;
 import Parameters::*;
-import PCUInstruction::*;
 
 typedef 16 SYST_ARRAY_SIZE;
 typedef 256 SYST_ARRAY_SIZE_SQUARED;

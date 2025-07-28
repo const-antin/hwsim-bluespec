@@ -3,7 +3,7 @@ package Types;
 import Parameters::*;
 import Vector::*;
 
-typedef Int#(32) StopToken;
+typedef UInt#(32) StopToken;
 typedef Int#(32) Scalar;
 
 typedef 16 TILE_SIZE;
@@ -140,7 +140,8 @@ endfunction
 
 typedef Bit#(32) Ref_Inner;
 typedef Tuple2#(Ref_Inner, Bool) Ref; // Reference, deallocate
-typedef Bit#(0) EndToken;
+typedef struct {
+} EndToken deriving (Bits, Eq, FShow);
 
 typedef struct {
     Tile t;
@@ -153,17 +154,17 @@ typedef union tagged {
     Tile Tag_Tile;
     Ref Tag_Ref;
     Scalar Tag_Scalar;
-} Data deriving (Bits, FShow);
+} Data deriving (Bits, FShow, Eq);
 
 typedef struct {
     UInt#(16) ptr;
     UInt#(16) port_idx;
-} Instruction_Ptr deriving (Bits, FShow);
+} Instruction_Ptr deriving (Bits, FShow, Eq);
 
 typedef union tagged {
     Tuple2#(Data, StopToken) Tag_Data;
     Instruction_Ptr Tag_Instruction;
     EndToken Tag_EndToken;
-} ChannelMessage deriving (Bits, FShow);
+} ChannelMessage deriving (Bits, FShow, Eq);
 
 endpackage
