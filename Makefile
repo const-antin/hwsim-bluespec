@@ -3,11 +3,22 @@
 
 # ================================================================
 
-# Optional: override default BDPI C source and object
-BDPI_C_SRC ?= dpi/matmul_tile.c
-BDPI_OBJ     ?= dpi/matmul_tile.o
+# Optional: override default BDPI C source
+BDPI_C_SRC ?= dpi/matmul_tile.c dpi/ramulator_wrapper.cpp
 
 # Add SMU directory to search path
 BSC_PATH1 = src/SMU:
+
+# ================================================================
+# Ramulator flags for linking
+
+BSC_LINK_FLAGS += -Xl "-L./ramulator2" \
+		-Xl "-lramulator"    \
+		-Xl "-lstdc++"       \
+		-Xl "-Wl,-rpath,@loader_path/../../ramulator2"\
+		-Xc++ "-I./ramulator2/ext/spdlog/include" \
+		-Xc++ "-std=c++17" \
+		-Xc++ "-I./ramulator2/ext/yaml-cpp/include" \
+		-Xc++ "-I./ramulator2/src"
 
 include ./res/Include_Makefile.mk

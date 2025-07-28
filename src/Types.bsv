@@ -147,6 +147,8 @@ typedef struct {
     StopToken st;
 } TaggedTile deriving (Bits, Eq, FShow);
 
+typedef SizeOf#(TaggedTile) TaggedTileSize;
+
 typedef union tagged {
     Tile Tag_Tile;
     Ref Tag_Ref;

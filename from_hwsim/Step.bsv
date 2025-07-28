@@ -7,13 +7,16 @@ import Types::*;
 import Vector::*;
 import FShow::*;
 import Debug::*;
+import RamulatorArbiter::*;
 
 module mkStep(Empty);
-    let mod_0_inner <- mkTileReader(2048, "gen_bsv/address_reader_0.hex");
+    RamulatorArbiter_IFC#(4) ramulator_arbiter <- mkRamulatorArbiter(4);
+
+    let mod_0_inner <- mkTileReader(2048, "gen_bsv/address_reader_0.hex", 0, ramulator_arbiter.ports);
     let mod_0 <- mkDebugOperation(mod_0_inner, "mod_0");
-    let mod_1_inner <- mkTileReader(2048, "gen_bsv/address_reader_1.hex");
+    let mod_1_inner <- mkTileReader(2048, "gen_bsv/address_reader_1.hex", 1, ramulator_arbiter.ports);
     let mod_1 <- mkDebugOperation(mod_1_inner, "mod_1");
-    let mod_2_inner <- mkTileReader(2048, "gen_bsv/address_reader_2.hex");
+    let mod_2_inner <- mkTileReader(2048, "gen_bsv/address_reader_2.hex", 2, ramulator_arbiter.ports);
     let mod_2 <- mkDebugOperation(mod_2_inner, "mod_2");
     let mod_3_inner <- mkBroadcast2();
     let mod_3 <- mkDebugOperation(mod_3_inner, "mod_3");
@@ -61,8 +64,8 @@ module mkStep(Empty);
     let mod_21 <- mkDebugOperation(mod_21_inner, "mod_21");
     let mod_22_inner <- mkPromote(3);
     let mod_22 <- mkDebugOperation(mod_22_inner, "mod_22");
-    let mod_23_inner <- mkTileReader(2048, "gen_bsv/address_reader_12.hex");
-    let mod_23 <- mkDebugOperation(mod_23_inner, "mod_23");
+    // let mod_23_inner <- mkTileReader(2048, "gen_bsv/address_reader_12.hex", 3, ramulator_arbiter.ports);
+    // let mod_23 <- mkDebugOperation(mod_23_inner, "mod_23");
     let mod_24_inner <- mkRepeatStatic(1);
     let mod_24 <- mkDebugOperation(mod_24_inner, "mod_24");
     PMU_IFC mod_25_bufferize <- mkPMU(1);
@@ -84,6 +87,7 @@ module mkStep(Empty);
     let mod_31 <- mkDebugOperation(mod_31_inner, "mod_31");
     let mod_32_inner <- mkPrinter("mod_32");
     let mod_32 <- mkDebugOperation(mod_32_inner, "mod_32");
+
     (* descending_urgency = "rule_1, rule_2, rule_3, rule_4, rule_5, rule_6, rule_7, rule_8, rule_9, rule_10, rule_11, rule_12, rule_13, rule_14, rule_15, rule_16, rule_17, rule_18, rule_19, rule_20, rule_21, rule_22, rule_23, rule_24, rule_25, rule_26, rule_27, rule_28, rule_29, rule_30, rule_31, rule_32, rule_33, rule_34, rule_35, rule_36, rule_37, rule_38, rule_39, rule_40, rule_41, rule_42, rule_43, rule_44, rule_45" *)
     rule rule_1;
         let t <- mod_30.get(0);
@@ -93,11 +97,76 @@ module mkStep(Empty);
         let t <- mod_27.get(0);
         mod_26.put(0, t);
     endrule
-    rule rule_3;
+    rule rule_19;
+        let t <- mod_18.get(0);
+        mod_19.put(0, t);
+    endrule
+    rule rule_20;
+        let t <- mod_8.get(0);
+        mod_9.put(0, t);
+    endrule
+    rule rule_21;
+        let t <- mod_5.get(0);
+        mod_4.put(0, t);
+    endrule
+    rule rule_22;
+        let t <- mod_3.get(0);
+        mod_5.put(0, t);
+    endrule
+    rule rule_23;
+        // let t <- mod_23.get(0);
+        // mod_25.put(0, t);
+    endrule
+    rule rule_24;
+        let t <- mod_30.get(1);
+        mod_32.put(0, t);
+    endrule
+    rule rule_25;
+        let t <- mod_16.get(0);
+        mod_17.put(0, t);
+    endrule
+    rule rule_26;
         let t <- mod_15.get(0);
         mod_14.put(0, t);
     endrule
-    rule rule_4;
+    rule rule_27;
+        let t <- mod_10.get(1);
+        $display("Output of first part: %d", t);
+        // mod_20.put(0, t);
+    endrule
+    rule rule_28;
+        let t <- mod_14.get(0);
+        mod_15.put(1, t);
+    endrule
+    rule rule_29;
+        let t <- mod_4.get(0);
+        mod_5.put(1, t);
+    endrule
+    rule rule_30;
+        let t <- mod_11.get(1);
+        mod_10.put(1, t);
+    endrule
+    rule rule_31;
+        let t <- mod_28.get(0);
+        mod_29.put(0, t);
+    endrule
+    rule rule_32;
+        let t <- mod_31.get(0);
+        mod_31.put(1, t);
+    endrule
+    rule rule_33;
+        let t <- mod_0.get(0);
+        mod_3.put(0, t);
+    endrule
+    rule rule_34;
+        let t <- mod_6.get(0);
+        mod_7.put(1, t);
+    endrule
+    rule rule_35;
+        let t <- mod_19.get(0);
+        mod_19.put(1, t);
+    endrule
+    rule rule_36;
         let t <- mod_11.get(0);
         mod_11.put(1, t);
     endrule
@@ -197,74 +266,5 @@ module mkStep(Empty);
         let t <- mod_22.get(0);
         mod_27.put(0, t);
     endrule
-    rule rule_29;
-        let t <- mod_25.get(1);
-        mod_28.put(0, t);
-    endrule
-    rule rule_30;
-        let t <- mod_18.get(0);
-        mod_19.put(0, t);
-    endrule
-    rule rule_31;
-        let t <- mod_31.get(1);
-        mod_30.put(1, t);
-    endrule
-    rule rule_32;
-        let t <- mod_5.get(0);
-        mod_4.put(0, t);
-    endrule
-    rule rule_33;
-        let t <- mod_6.get(0);
-        mod_7.put(1, t);
-    endrule
-    rule rule_34;
-        let t <- mod_19.get(0);
-        mod_19.put(1, t);
-    endrule
-    rule rule_35;
-        let t <- mod_8.get(0);
-        mod_9.put(0, t);
-    endrule
-    rule rule_36;
-        let t <- mod_10.get(1);
-        mod_20.put(0, t);
-    endrule
-    rule rule_37;
-        let t <- mod_16.get(0);
-        mod_17.put(0, t);
-    endrule
-    rule rule_38;
-        let t <- mod_23.get(0);
-        mod_25.put(0, t);
-    endrule
-    rule rule_39;
-        let t <- mod_24.get(0);
-        mod_25.put(1, t);
-    endrule
-    rule rule_40;
-        let t <- mod_27.get(1);
-        mod_28.put(1, t);
-    endrule
-    rule rule_41;
-        let t <- mod_11.get(1);
-        mod_10.put(1, t);
-    endrule
-    rule rule_42;
-        let t <- mod_3.get(0);
-        mod_5.put(0, t);
-    endrule
-    rule rule_43;
-        let t <- mod_7.get(0);
-        mod_6.put(0, t);
-    endrule
-    rule rule_44;
-        let t <- mod_5.get(1);
-        mod_8.put(0, t);
-    endrule
-    rule rule_45;
-        let t <- mod_21.get(0);
-        mod_22.put(0, t);
-    endrule
-
 endmodule
 endpackage

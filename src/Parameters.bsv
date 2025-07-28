@@ -20,4 +20,15 @@ typedef TLog#(SETS) SETS_LOG;
 typedef Bit#(SETS_LOG) SET_INDEX;
 typedef TMul#(FRAMES_PER_SET, SETS) MAX_ENTRIES;
 
+// The ramulator context does not return requests in order. Therefore, we need a reorder buffer
+// 
+
+typedef 4096 RAMULATOR_BITS_PER_REQUEST; // Assuming 8 stacks, HBM2, DDR and Burst-Size 2
+typedef 64 RAMULATOR_REORDER_WINDOW_SIZE;
+typedef 0 RAMULATOR_PRINT_BUBBLES; // 0: no printing, 1: print bubbles
+
+typedef 0 PRINT_DEBUG_OPERATION; // 0: no printing, 1: print debug operation
+
+typedef 1 USE_RAMULATOR;
+
 endpackage

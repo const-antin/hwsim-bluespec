@@ -6,6 +6,7 @@ import Vector::*;
 import Assert::*;
 import Types::*;
 import FileReader::*;
+import RamulatorArbiter::*;
 
 interface Operation_IFC;
     method Action put(Int#(32) input_port, ChannelMessage msg);
@@ -118,7 +119,7 @@ module mkBroadcast2 (Operation_IFC);
     endmethod
 endmodule
 
-module mkUnaryMap#(function Tile func (Tile tile)) (Operation_IFC);
+module mkUnaryMap#(Integer id, function Tile func (Tile tile)) (Operation_IFC);
     FIFO#(ChannelMessage) input_fifo <- mkFIFO;
     FIFO#(ChannelMessage) output_fifo <- mkFIFO;
 
@@ -295,8 +296,8 @@ module mkAccumBigTile#(function Tile func (Tile tile, Tile tile2), Int#(32) rank
     endmethod
 endmodule
 
-module mkTileReader#(Integer num_entries, String filename) (Operation_IFC);
-    FileReader_IFC#(TaggedTile) reader <- mkFileReader(num_entries, filename);
+module mkTileReader#(Integer num_entries, String filename, Bit#(8) port_id, RamulatorArbiterIO arbiter) (Operation_IFC);
+    FileReader_IFC#(TaggedTile) reader <- mkFileReader(num_entries, filename, port_id, arbiter);
 
     method ActionValue#(ChannelMessage) get(Int#(32) output_port);
         TaggedTile tile <- reader.readNext;
@@ -315,8 +316,13 @@ module mkPrinter#(String name) (Operation_IFC);
     rule print;
         let cur = input_fifo.first;
         input_fifo.deq;
-
+        
         $display("[cycle %d] %s: %s", cc, name, fshow(cur));
+
+        if (tpl_2(cur.Tag_Data) == 5) begin // Hardcoded for Gina's application.
+            $display("Finished at cycle %d", cc);
+            $finish;
+        end
     endrule
 
     rule cc_rule;
