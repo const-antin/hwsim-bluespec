@@ -270,15 +270,17 @@ module mkPMU#(
         data_in.enq(msg);
     endmethod
     method ActionValue#(ChannelMessage) get_token();
+        let msg = token_out.first;
         token_out.deq;
-        return token_out.first;
+        return msg;
     endmethod
     method Action put_token(ChannelMessage msg);
         token_in.enq(msg);
     endmethod
     method ActionValue#(ChannelMessage) get_data();
+        let msg = data_out.first;
         data_out.deq;
-        return data_out.first;
+        return msg;
     endmethod
 
     interface Operation_IFC operation;
