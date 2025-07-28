@@ -120,6 +120,7 @@ module mkTestPMU();
                             $display("PASSED:");
                             // printTile(TaggedTile { t: t, st: st });
                             $display("Expected [st = %0d]:", expected.st);
+                            $display("Got [st = %0d]:", st);
                             // printTile(expected);
                         end else begin
                             $display("FAILED:");
