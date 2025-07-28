@@ -142,7 +142,7 @@ module mkUnaryMap#(function Tile func (Tile tile)) (Operation_IFC);
     endmethod
 endmodule
 
-module mkBinaryMap#(function Tile func (Tile tile, Tile tile2)) (Operation_IFC);
+module mkBinaryMap#(Int#(32) id, function Tile func (Tile tile, Tile tile2)) (Operation_IFC);
     FIFO#(ChannelMessage) input_fifo1 <- mkFIFO;
     FIFO#(ChannelMessage) input_fifo2 <- mkFIFO;
     FIFO#(ChannelMessage) output_fifo <- mkFIFO;
@@ -157,9 +157,9 @@ module mkBinaryMap#(function Tile func (Tile tile, Tile tile2)) (Operation_IFC);
 
         if (cur_1 matches tagged Tag_Data .current_1 &&& cur_2 matches tagged Tag_Data .current_2) begin
             let out = func(tpl_1(current_1).Tag_Tile, tpl_1(current_2).Tag_Tile);
-            $display("ST1: %d, ST2: %d, count: %d", tpl_2(current_1), tpl_2(current_2), count);
+            $display("ST1: %d, ST2: %d, count: %d, id: %d", tpl_2(current_1), tpl_2(current_2), count, id);
             if (tpl_2(current_2) != tpl_2(current_1)) begin
-                $error("Stop tokens are not the same, left: %d, right: %d", tpl_2(current_1), tpl_2(current_2));
+                $error("id: %d, Stop tokens are not the same at cycle %d, left: %d, right: %d", id, count, tpl_2(current_1), tpl_2(current_2));
                 $finish;
                 // $finish;
             end
@@ -334,18 +334,18 @@ module mkPrinter#(String name) (Operation_IFC);
 endmodule
 
 module mkTop(Empty);
-    let m1 <- mkBinaryMap(matmul_t_tile);
-    let m2 <- mkBinaryMap(matmul_t_tile);
+    let m1 <- mkBinaryMap(1, matmul_t_tile);
+    let m2 <- mkBinaryMap(2, matmul_t_tile);
 
     let a1 <- mkAccum(add_tile, 1);
     let a2 <- mkAccum(add_tile, 1);
 
-    let m3 <- mkBinaryMap(mul_tile);
+    let m3 <- mkBinaryMap(3, mul_tile);
     let m4 <- mkUnaryMap(silu_tile);
 
     let p5 <- mkPromote(0);
 
-    let m6 <- mkBinaryMap(matmul_t_tile);
+    let m6 <- mkBinaryMap(4, matmul_t_tile);
     let a7 <- mkAccum(add_tile, 1);
 
     rule stimulus;
