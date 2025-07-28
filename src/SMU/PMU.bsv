@@ -58,12 +58,13 @@ module mkPMU#(
 
     let frame_width = valueOf(TLog#(FRAMES_PER_SET));
     let set_width = valueOf(TLog#(SETS));
-    Reg#(Maybe#(Tuple3#(Bit#(TLog#(MAX_ENTRIES)), Bool, StopToken))) load_token <- mkReg(tagged Invalid);
+    Reg#(Maybe#(Tuple4#(Bit#(TLog#(MAX_ENTRIES)), Bool, StopToken, Bit#(TLog#(MAX_ENTRIES))))) load_token <- mkReg(tagged Invalid);
 
     Reg#(Bool) initialized <- mkReg(False);
     Reg#(Bit#(TLog#(MAX_ENTRIES))) first_entry_initialized_index <- mkReg(0);
 
     ConfigReg#(Maybe#(SET_INDEX)) next_free_set <- mkConfigReg(tagged Invalid);
+    ConfigReg#(Maybe#(Bit#(TLog#(MAX_ENTRIES)))) deallocate_reg <- mkConfigReg(tagged Invalid);
 
     rule initialization (!initialized);
         first_entry.upd(first_entry_initialized_index, tagged Invalid);
@@ -84,6 +85,11 @@ module mkPMU#(
         cycle_count <= cycle_count + 1;
     endrule
 
+    rule deallocate_token (initialized &&& isValid(deallocate_reg));
+        first_entry.upd(truncate(deallocate_reg.Valid), tagged Invalid);
+        deallocate_reg <= tagged Invalid;
+    endrule
+
     (* execution_order = "store_tile, next_free" *)
     rule next_free (initialized && !isValid(next_free_set));
         // $display("Fired next_free");
@@ -101,7 +107,7 @@ module mkPMU#(
         endcase
     endrule
 
-    (* descending_urgency = "start_load_tile, store_tile" *)
+    (* descending_urgency = "deallocate_token, store_tile" *)
     rule store_tile (initialized && (isValid(next_free_set) || curr_loc.valid));
         $display("Fired store_tile");
         let d_in = data_in.first;
@@ -195,11 +201,7 @@ module mkPMU#(
                 let token_input = unwrapRef(tt);
                 let maybe_packed_loc = first_entry.sub(truncate(token_input.fst));
                 if (maybe_packed_loc matches tagged Valid .p) begin
-                    load_token <= tagged Valid tuple3(p, token_input.snd, st);
-                    if (token_input.snd) begin
-                        first_entry.upd(truncate(token_input.fst), tagged Invalid);
-                        $display("Deallocated token %d", token_input.fst);
-                    end
+                    load_token <= tagged Valid tuple4(p, token_input.snd, st, truncate(token_input.fst));
                     // $display("[DEBUG]: starting load tile at cycle %d, load_token %d", cycle_count, tpl_1(load_token.Valid));
                 end else begin
                     $display("[ERROR]: No valid location found for token %d", token_input.fst);
@@ -226,11 +228,12 @@ module mkPMU#(
         endcase
     endrule
 
-    rule continue_load_tile (isValid(load_token) && initialized);
+    rule continue_load_tile (isValid(load_token) && initialized && !isValid(deallocate_reg));
         $display("Fired continue load tile");
         let loc_table_entry = tpl_1(load_token.Valid); // {set, frame}
         let deallocate = tpl_2(load_token.Valid);
         let st = tpl_3(load_token.Valid);
+        let orig_token = tpl_4(load_token.Valid);
         SET_INDEX set   = truncate(loc_table_entry >> valueOf(TLog#(FRAMES_PER_SET)));
         FRAME_INDEX frame = truncate(loc_table_entry);
         let tile = mem.read(set, frame);
@@ -240,12 +243,15 @@ module mkPMU#(
         let next_set = set + 1;
         if (next_table[loc_table_entry] matches tagged Valid .next_loc) begin
             next_set = truncate(next_loc >> valueOf(TLog#(FRAMES_PER_SET)));
-            load_token <= tagged Valid tuple3(next_loc, deallocate, st);
+            load_token <= tagged Valid tuple4(next_loc, deallocate, st, orig_token);
             // $display("Had next, shouldn't update out_rank which is %d", out_rank);
         end else begin
             load_token <= tagged Invalid;
             // $display("Out rank is %d, st is %d, rank is %d", out_rank, st, rank);
             out_rank = rank + st;
+            if (deallocate) begin
+                deallocate_reg <= tagged Valid truncate(orig_token);
+            end
             // first_entry.upd(token_counter, tagged Invalid); // TODO: Need this eventually but creates conflicts
         end
         
