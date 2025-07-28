@@ -1,3 +1,6 @@
+// TODO: Make everything work in fifo order. I think this should immediately work as long as I emit the token earlier. 
+    // I already have the logic necessary to make sure i don't read data that hasn't been stored (untested)
+
 package PMU;
 
 import FIFO::*;
@@ -52,6 +55,7 @@ module mkPMU#(
     Reg#(Bit#(32)) cycle_count <- mkReg(0);
 
     RegFile#(Bit#(TLog#(MAX_ENTRIES)), Maybe#(Bit#(TLog#(MAX_ENTRIES)))) first_entry <- mkRegFileWCF(0, fromInteger(valueOf(MAX_ENTRIES) - 1));    
+    RegFile#(Bit#(TLog#(MAX_ENTRIES)), Bool) token_complete <- mkRegFileWCF(0, fromInteger(valueOf(MAX_ENTRIES) - 1));
     Vector#(MAX_ENTRIES, ConfigReg#(Maybe#(Bit#(TLog#(MAX_ENTRIES))))) next_table <- replicateM(mkConfigReg(tagged Invalid));
     // Vector#(MAX_ENTRIES, ConfigReg#(Bit#(TLog#(MAX_ENTRIES)))) pmu_id_table <- replicateM(mkConfigReg(0)); // TODO: Unused for static
     Reg#(Bit#(TLog#(MAX_ENTRIES))) prev_stored <- mkReg(0);
@@ -66,8 +70,18 @@ module mkPMU#(
     ConfigReg#(Maybe#(SET_INDEX)) next_free_set <- mkConfigReg(tagged Invalid);
     ConfigReg#(Maybe#(Bit#(TLog#(MAX_ENTRIES)))) deallocate_reg <- mkConfigReg(tagged Invalid);
 
+    (* execution_order = "cycle_counter, store_tile" *)
+    (* execution_order = "cycle_counter, next_free" *)
+    (* execution_order = "cycle_counter, start_load_tile" *)
+    (* execution_order = "cycle_counter, continue_load_tile" *)
+    (* execution_order = "next_free, continue_load_tile" *)
+    (* execution_order = "store_tile, next_free" *)
+
+    (* descending_urgency = "deallocate_token, store_tile" *)
+
     rule initialization (!initialized);
         first_entry.upd(first_entry_initialized_index, tagged Invalid);
+        token_complete.upd(first_entry_initialized_index, False);
         if (first_entry_initialized_index == fromInteger(valueOf(MAX_ENTRIES) - 1)) begin
             initialized <= True; 
         end else begin
@@ -75,10 +89,6 @@ module mkPMU#(
         end
     endrule
 
-    (* execution_order = "cycle_counter, store_tile" *)
-    (* execution_order = "cycle_counter, next_free" *)
-    (* execution_order = "cycle_counter, start_load_tile" *)
-    (* execution_order = "cycle_counter, continue_load_tile" *)
     rule cycle_counter (initialized);
         // $display("-------------------------------------------");
         // $display("[CYCLE COUNTER]: %d", cycle_count);
@@ -87,10 +97,10 @@ module mkPMU#(
 
     rule deallocate_token (initialized &&& isValid(deallocate_reg));
         first_entry.upd(truncate(deallocate_reg.Valid), tagged Invalid);
+        token_complete.upd(truncate(deallocate_reg.Valid), False);
         deallocate_reg <= tagged Invalid;
     endrule
 
-    (* execution_order = "store_tile, next_free" *)
     rule next_free (initialized && !isValid(next_free_set));
         // $display("Fired next_free");
         let mset <- free_list.allocSet();
@@ -107,7 +117,6 @@ module mkPMU#(
         endcase
     endrule
 
-    (* descending_urgency = "deallocate_token, store_tile" *)
     rule store_tile (initialized && (isValid(next_free_set) || curr_loc.valid));
         $display("Fired store_tile");
         let d_in = data_in.first;
@@ -174,6 +183,7 @@ module mkPMU#(
                 if (emit_token) begin
                     Bit#(32) token_to_emit = zeroExtend(token_counter);
                     token_counter <= token_counter + 1;
+                    token_complete.upd(token_counter, True);
                     // $display("Enqueuing output token: ", fshow(tagged Tag_Data tuple2(tagged Tag_Ref tuple2(token_to_emit, True), new_st)));
                     token_out.enq(tagged Tag_Data tuple2(tagged Tag_Ref tuple2(token_to_emit, True), new_st));
                 end
@@ -234,35 +244,41 @@ module mkPMU#(
         let deallocate = tpl_2(load_token.Valid);
         let st = tpl_3(load_token.Valid);
         let orig_token = tpl_4(load_token.Valid);
-        SET_INDEX set   = truncate(loc_table_entry >> valueOf(TLog#(FRAMES_PER_SET)));
-        FRAME_INDEX frame = truncate(loc_table_entry);
-        let tile = mem.read(set, frame);
-        let out_rank = tile.st;
 
-        // Check if weve processed all entries for this token
-        let next_set = set + 1;
-        if (next_table[loc_table_entry] matches tagged Valid .next_loc) begin
-            next_set = truncate(next_loc >> valueOf(TLog#(FRAMES_PER_SET)));
-            load_token <= tagged Valid tuple4(next_loc, deallocate, st, orig_token);
-            // $display("Had next, shouldn't update out_rank which is %d", out_rank);
-        end else begin
-            load_token <= tagged Invalid;
-            // $display("Out rank is %d, st is %d, rank is %d", out_rank, st, rank);
-            out_rank = rank + st;
-            if (deallocate) begin
-                deallocate_reg <= tagged Valid truncate(orig_token);
+        Bool token_is_complete = token_complete.sub(orig_token);
+        Bool has_next_piece = isValid(next_table[loc_table_entry]);
+
+        if (token_is_complete || has_next_piece) begin
+            SET_INDEX set   = truncate(loc_table_entry >> valueOf(TLog#(FRAMES_PER_SET)));
+            FRAME_INDEX frame = truncate(loc_table_entry);
+            let tile = mem.read(set, frame);
+            let out_rank = tile.st;
+
+            // Check if weve processed all entries for this token
+            let next_set = set + 1;
+            if (next_table[loc_table_entry] matches tagged Valid .next_loc) begin
+                next_set = truncate(next_loc >> valueOf(TLog#(FRAMES_PER_SET)));
+                load_token <= tagged Valid tuple4(next_loc, deallocate, st, orig_token);
+                // $display("Had next, shouldn't update out_rank which is %d", out_rank);
+            end else begin
+                load_token <= tagged Invalid;
+                // $display("Out rank is %d, st is %d, rank is %d", out_rank, st, rank);
+                out_rank = rank + st;
+                if (deallocate) begin
+                    deallocate_reg <= tagged Valid truncate(orig_token);
+                end
+                // first_entry.upd(token_counter, tagged Invalid); // TODO: Need this eventually but creates conflicts
             end
-            // first_entry.upd(token_counter, tagged Invalid); // TODO: Need this eventually but creates conflicts
-        end
-        
-        // $display("Enqueuing output data: %d", out_rank);
-        data_out.enq(tagged Tag_Data tuple2(tagged Tag_Tile tile.t, out_rank));
+            
+            // $display("Enqueuing output data: %d", out_rank);
+            data_out.enq(tagged Tag_Data tuple2(tagged Tag_Tile tile.t, out_rank));
 
-        if (deallocate) begin
-            if (set != next_set) begin
-                free_list.freeSet(set); 
-                // $display("[DEBUG]: Freed set %d", set);
-            end 
+            if (deallocate) begin
+                if (set != next_set) begin
+                    free_list.freeSet(set); 
+                    // $display("[DEBUG]: Freed set %d", set);
+                end 
+            end
         end
     endrule
 
