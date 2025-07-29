@@ -1,31 +1,31 @@
+// TODO: Make everything work in fifo order. I think this should immediately work as long as I emit the token earlier. 
+    // I already have the logic necessary to make sure i don't read data that hasn't been stored (untested)
+
+// TODO: Replace loop with find
+
 package PMU;
 
 import FIFO::*;
+import FIFOF::*;
 import Types::*;
 import Vector::*;
 import RegFile::*;
+import ConfigReg::*;
 import BankedMemory::*;
 import Parameters::*;
 import SetFreeList::*;
 import SetUsageTracker::*;
 import Unwrap::*;
+import Operation::*;
 
 // Tracking the current storage location
 typedef struct {
-    SETS_LOG set;
-    FRAMES_PER_SET_LOG frame;
+    SET_INDEX set;
+    FRAME_INDEX frame;
     Bool valid;
 } StorageLocation deriving(Bits, Eq);
 
-typedef struct {
-  Vector#(MAX_ENTRIES, StorageLocation) vec;
-  UInt#(TLog#(MAX_ENTRIES)) next_idx;
-} TokenMapping deriving (Bits, Eq);
-
-interface Operation_IFC;
-    method Action put(Int#(32) input_port, ChannelMessage msg);
-    method ActionValue#(ChannelMessage) get(Int#(32) output_port);
-endinterface
+typedef UInt#(TAdd#(TLog#(SETS), TLog#(FRAMES_PER_SET))) StorageAddr;
 
 // Interface that just exposes the modules existence
 interface PMU_IFC;
@@ -35,7 +35,6 @@ interface PMU_IFC;
     method ActionValue#(ChannelMessage) get_token();
     method Action put_token(ChannelMessage msg);
     method ActionValue#(ChannelMessage) get_data();
-    method Bool ready();
 endinterface
 
 
@@ -54,37 +53,77 @@ module mkPMU#(
     SetUsageTracker_IFC usage_tracker <- mkSetUsageTracker;
     Reg#(StorageLocation) curr_loc <- mkReg(StorageLocation { set: 0, frame: 0, valid: False });
     Reg#(Int#(32)) rank <- mkReg(rank_in);
-    Reg#(Bit#(TLog#(MAX_ENTRIES))) token_counter <- mkReg(0);
+    ConfigReg#(Bit#(TLog#(MAX_ENTRIES))) token_counter <- mkConfigReg(0);
     Reg#(Bit#(32)) cycle_count <- mkReg(0);
-    RegFile#(Bit#(TLog#(MAX_ENTRIES)), TokenMapping) token_table <- mkRegFile(0, fromInteger(valueOf(MAX_ENTRIES) - 1));
+
+    RegFile#(Bit#(TLog#(MAX_ENTRIES)), Maybe#(Bit#(TLog#(MAX_ENTRIES)))) first_entry <- mkRegFileWCF(0, fromInteger(valueOf(MAX_ENTRIES) - 1));    
+    RegFile#(Bit#(TLog#(MAX_ENTRIES)), Bool) token_complete <- mkRegFileWCF(0, fromInteger(valueOf(MAX_ENTRIES) - 1));
+    Vector#(MAX_ENTRIES, ConfigReg#(Maybe#(Bit#(TLog#(MAX_ENTRIES))))) next_table <- replicateM(mkConfigReg(tagged Invalid));
+    // Vector#(MAX_ENTRIES, ConfigReg#(Bit#(TLog#(MAX_ENTRIES)))) pmu_id_table <- replicateM(mkConfigReg(0)); // TODO: Unused for static
+    Reg#(Bit#(TLog#(MAX_ENTRIES))) prev_stored <- mkReg(0);
+
     let frame_width = valueOf(TLog#(FRAMES_PER_SET));
     let set_width = valueOf(TLog#(SETS));
-    Reg#(Maybe#(Tuple2#(Bit#(32), Bool))) load_token <- mkReg(tagged Invalid);
-    Reg#(UInt#(TLog#(MAX_ENTRIES))) load_idx <- mkReg(0);
-    
-    Reg#(Bool) token_table_initialized <- mkReg(False);
-    Reg#(Bit#(TLog#(MAX_ENTRIES))) init_counter <- mkReg(0);
-    rule init_token_table (!token_table_initialized);
-        TokenMapping tm;
-        tm.vec = replicate(StorageLocation { set: 0, frame: 0, valid: False });
-        tm.next_idx = 0;
-        token_table.upd(init_counter, tm);
+    Reg#(Maybe#(Tuple4#(Bit#(TLog#(MAX_ENTRIES)), Bool, StopToken, Bit#(TLog#(MAX_ENTRIES))))) load_token <- mkReg(tagged Invalid);
 
-        if (init_counter == fromInteger(valueOf(MAX_ENTRIES) - 1)) begin
-            token_table_initialized <= True;
+    Reg#(Bool) initialized <- mkReg(False);
+    Reg#(Bit#(TLog#(MAX_ENTRIES))) first_entry_initialized_index <- mkReg(0);
+
+    ConfigReg#(Maybe#(SET_INDEX)) next_free_set <- mkConfigReg(tagged Invalid);
+    ConfigReg#(Maybe#(Bit#(TLog#(MAX_ENTRIES)))) deallocate_reg <- mkConfigReg(tagged Invalid);
+
+    (* execution_order = "cycle_counter, store_tile" *)
+    (* execution_order = "cycle_counter, next_free" *)
+    (* execution_order = "cycle_counter, start_load_tile" *)
+    (* execution_order = "cycle_counter, continue_load_tile" *)
+    (* execution_order = "next_free, continue_load_tile" *)
+    (* execution_order = "store_tile, next_free" *)
+
+    (* descending_urgency = "deallocate_token, store_tile" *)
+
+    rule initialization (!initialized);
+        first_entry.upd(first_entry_initialized_index, tagged Invalid);
+        token_complete.upd(first_entry_initialized_index, False);
+        if (first_entry_initialized_index == fromInteger(valueOf(MAX_ENTRIES) - 1)) begin
+            initialized <= True; 
         end else begin
-            init_counter <= init_counter + 1;
+            first_entry_initialized_index <= first_entry_initialized_index + 1;
         end
     endrule
 
-    rule cycle_counter (token_table_initialized);
-        $display("[CYCLE COUNTER]: %d", cycle_count);
+    rule cycle_counter (initialized);
+        // $display("-------------------------------------------");
+        // $display("[CYCLE COUNTER]: %d", cycle_count);
         cycle_count <= cycle_count + 1;
     endrule
 
-    rule store_tile (token_table_initialized);
+    rule deallocate_token (initialized &&& isValid(deallocate_reg));
+        first_entry.upd(truncate(deallocate_reg.Valid), tagged Invalid);
+        token_complete.upd(truncate(deallocate_reg.Valid), False);
+        deallocate_reg <= tagged Invalid;
+    endrule
+
+    rule next_free (initialized && !isValid(next_free_set));
+        // $display("Fired next_free");
+        let mset <- free_list.allocSet();
+        case (mset) matches
+            tagged Valid .s: begin
+                next_free_set <= tagged Valid s;
+            end
+            default: begin
+                if (cycle_count % 1000 == 0) begin
+                    // $display("***** Out of memory at cycle %d, load token validity is %d *****", cycle_count, isValid(load_token));
+                end
+                next_free_set <= tagged Invalid;
+            end
+        endcase
+    endrule
+
+    rule store_tile (initialized && (isValid(next_free_set) || curr_loc.valid));
+        $display("Fired store_tile");
         let d_in = data_in.first;
         data_in.deq;
+
 
         case (d_in) matches
             tagged Tag_Data {.tt, .st}: begin
@@ -97,38 +136,28 @@ module mkPMU#(
                 end
 
                 StorageLocation new_loc = curr_loc;
-                StorageLocation storage_location = curr_loc;
+
+                let set = 0;
+                let frame = 0;
 
                 if (!curr_loc.valid) begin
-                    Bit#(SETS_LOG) exclude_mask = 0;
-                    // if (isValid(load_token)) begin
-                    //     let tm = token_table.sub(truncate(fromMaybe(tuple2(0, False), load_token).fst));
-                    //     let loc = tm.vec[load_idx];
-                    //     let set = loc.set;
-                    //     exclude_mask[set] = 1;
-                    // end
-                    let mset <- free_list.allocSet(exclude_mask);
-                    case (mset) matches
-                        tagged Valid .set: begin
-                            mem.write(set, 0, TaggedTile { t: tile, st: st });
-                            usage_tracker.setFrame(set, 1);
-
-                            FRAMES_PER_SET_LOG zero_frame = 0;
-                            storage_location = StorageLocation { set: set, frame: 0, valid: True };
-                            new_loc = StorageLocation { set: set, frame: 1, valid: True };
-                        end
-                        default: begin
-                            $display("***** Out of memory *****");
-                            $finish;
-                        end
-                    endcase
+                    set = next_free_set.Valid;
+                    frame = 0;
+                    mem.write(set, 0, TaggedTile { t: tile, st: st });
+                    usage_tracker.setFrame(set, 1);
+                    new_loc = StorageLocation { set: set, frame: 1, valid: True };
+                    next_free_set <= tagged Invalid;
+                    // $display("[DEBUG]: !curr_loc.valid: tile in set %d, frame %d", set, frame);
                 end else begin
-                    let set = curr_loc.set;
-                    let frame = curr_loc.frame;
-                    storage_location = curr_loc;
+                    // $display("[DEBUG]: Storing tile in set %d, frame %d", curr_loc.set, curr_loc.frame);
+                    set = curr_loc.set;
+                    frame = curr_loc.frame;
 
                     mem.write(set, frame, TaggedTile { t: tile, st: st });
                     let full <- usage_tracker.incFrame(set);
+                    // $display("[DEBUG]: full before: %d", full);
+                    full = full || emit_token;
+                    // $display("[DEBUG]: full: %d", full);
 
                     new_loc = StorageLocation {
                         set: set,
@@ -137,15 +166,28 @@ module mkPMU#(
                     };
                 end
 
-                let tm = token_table.sub(token_counter);
-                tm.vec[tm.next_idx] = storage_location;
-                tm.next_idx = tm.next_idx + 1;
-                token_table.upd(token_counter, tm);
+                if (first_entry.sub(token_counter) matches tagged Invalid) begin
+                    let p = pack({set, frame});
+                    first_entry.upd(token_counter, tagged Valid p);
+                    next_table[p] <= tagged Invalid;
+                    // pmu_id_table[p] <= 0; // TODO: Dynamic pmu ids
+                    prev_stored <= p;
+                end else begin
+                    let p = pack({set, frame});
+                    next_table[prev_stored] <= tagged Valid p;
+                    if (prev_stored != p) begin
+                        next_table[p] <= tagged Invalid;
+                    end
+                    prev_stored <= p;
+                    // pmu_id_table[p] <= 0; // TODO: Dynamic pmu ids
+                end
 
                 if (emit_token) begin
                     Bit#(32) token_to_emit = zeroExtend(token_counter);
                     token_counter <= token_counter + 1;
-                    token_out.enq(tagged Tag_Data tuple2(tagged Tag_Ref tuple2(token_to_emit, False), new_st));
+                    token_complete.upd(token_counter, True);
+                    // $display("Enqueuing output token: ", fshow(tagged Tag_Data tuple2(tagged Tag_Ref tuple2(token_to_emit, True), new_st)));
+                    token_out.enq(tagged Tag_Data tuple2(tagged Tag_Ref tuple2(token_to_emit, True), new_st));
                 end
                 curr_loc <= new_loc;
             end
@@ -161,15 +203,22 @@ module mkPMU#(
     endrule
 
     // Rule to handle token retrievals: find matching value and return it
-    rule start_load_tile (!isValid(load_token) && token_table_initialized);
+    rule start_load_tile (!isValid(load_token) && initialized);
+        $display("Fired start load tile");
         let token_msg = token_in.first;
         token_in.deq;
         
         case (token_msg) matches
             tagged Tag_Data {.tt, .st}: begin
                 let token_input = unwrapRef(tt);
-                load_token <= tagged Valid token_input;
-                load_idx <= 0;
+                let maybe_packed_loc = first_entry.sub(truncate(token_input.fst));
+                if (maybe_packed_loc matches tagged Valid .p) begin
+                    load_token <= tagged Valid tuple4(p, token_input.snd, st, truncate(token_input.fst));
+                    // $display("[DEBUG]: starting load tile at cycle %d, load_token %d", cycle_count, tpl_1(load_token.Valid));
+                end else begin
+                    $display("[ERROR]: No valid location found for token %d", token_input.fst);
+                    $finish(0);
+                end
             end
             tagged Tag_EndToken .et: begin
                 // Print the state of the memory being used
@@ -191,26 +240,47 @@ module mkPMU#(
         endcase
     endrule
 
-    rule continue_load_tile (isValid(load_token) && token_table_initialized);
-        $display("[DEBUG]: Continuing load tile %d, %d", fromMaybe(tuple2(0, False), load_token).fst, fromMaybe(tuple2(0, False), load_token).snd);
-        let tm = token_table.sub(truncate(fromMaybe(tuple2(0, False), load_token).fst));
-        let deallocate = fromMaybe(tuple2(0, False), load_token).snd;
-        let loc = tm.vec[load_idx];
-        let set = loc.set;
-        let frame = loc.frame;
-        let tile = mem.read(set, frame);
-        data_out.enq(tagged Tag_Data tuple2(tagged Tag_Tile tile.t, tile.st));
-        if (deallocate) begin
-            let empty <- usage_tracker.decFrame(set);
-            if (empty) begin
-                free_list.freeSet(set); 
+    rule continue_load_tile (isValid(load_token) && initialized && !isValid(deallocate_reg));
+        $display("Fired continue load tile");
+        let loc_table_entry = tpl_1(load_token.Valid); // {set, frame}
+        let deallocate = tpl_2(load_token.Valid);
+        let st = tpl_3(load_token.Valid);
+        let orig_token = tpl_4(load_token.Valid);
+
+        Bool token_is_complete = token_complete.sub(orig_token);
+        Bool has_next_piece = isValid(next_table[loc_table_entry]);
+
+        if (token_is_complete || has_next_piece) begin
+            SET_INDEX set   = truncate(loc_table_entry >> valueOf(TLog#(FRAMES_PER_SET)));
+            FRAME_INDEX frame = truncate(loc_table_entry);
+            let tile = mem.read(set, frame);
+            let out_rank = tile.st;
+
+            // Check if weve processed all entries for this token
+            let next_set = set + 1;
+            if (next_table[loc_table_entry] matches tagged Valid .next_loc) begin
+                next_set = truncate(next_loc >> valueOf(TLog#(FRAMES_PER_SET)));
+                load_token <= tagged Valid tuple4(next_loc, deallocate, st, orig_token);
+                // $display("Had next, shouldn't update out_rank which is %d", out_rank);
+            end else begin
+                load_token <= tagged Invalid;
+                // $display("Out rank is %d, st is %d, rank is %d", out_rank, st, rank);
+                out_rank = rank + st;
+                if (deallocate) begin
+                    deallocate_reg <= tagged Valid truncate(orig_token);
+                end
+                // first_entry.upd(token_counter, tagged Invalid); // TODO: Need this eventually but creates conflicts
             end
-        end
-        if (load_idx == tm.next_idx - 1) begin
-            load_token <= tagged Invalid;
-            load_idx <= 0;
-        end else begin
-            load_idx <= load_idx + 1;
+            
+            // $display("Enqueuing output data: %d", out_rank);
+            data_out.enq(tagged Tag_Data tuple2(tagged Tag_Tile tile.t, out_rank));
+
+            if (deallocate) begin
+                if (set != next_set) begin
+                    free_list.freeSet(set); 
+                    // $display("[DEBUG]: Freed set %d", set);
+                end 
+            end
         end
     endrule
 
@@ -218,18 +288,17 @@ module mkPMU#(
         data_in.enq(msg);
     endmethod
     method ActionValue#(ChannelMessage) get_token();
+        let msg = token_out.first;
         token_out.deq;
-        return token_out.first;
+        return msg;
     endmethod
     method Action put_token(ChannelMessage msg);
         token_in.enq(msg);
     endmethod
     method ActionValue#(ChannelMessage) get_data();
+        let msg = data_out.first;
         data_out.deq;
-        return data_out.first;
-    endmethod
-    method Bool ready();
-        return token_table_initialized;
+        return msg;
     endmethod
 
     interface Operation_IFC operation;
@@ -253,6 +322,54 @@ module mkPMU#(
             return msg;
         endmethod
     endinterface
+
+endmodule
+
+typedef 1 NUM_ENTRIES;
+typedef 4 ENTRY_SIZE;
+
+module mkTestPMUStopToken(Empty);
+    let rank = 3;
+    PMU_IFC dut <- mkPMU(rank);
+    let rpt <- mkRepeatStatic(2);
+    let drained <- mkReg(0);
+
+    Reg#(UInt#(32)) state <- mkReg(1);
+
+    rule push if (state % fromInteger(valueOf(ENTRY_SIZE)) != 0 && state < 10 * fromInteger(valueOf(ENTRY_SIZE)));
+        let data = tagged Tag_Data (tuple2(tagged Tag_Tile (0), 0));
+        dut.put_data(data);
+        state <= state + 1;
+    endrule
+
+    rule push_2 if (state % fromInteger(valueOf(ENTRY_SIZE)) == 0);
+        let data = tagged Tag_Data (tuple2(tagged Tag_Tile (1), rank));
+        dut.put_data(data);
+        state <= state + 1;
+        $display("pushed everything.");
+    endrule
+
+    rule token_output_to_repeat_input;
+        let data <- dut.get_token();
+        // data = tagged Tag_Data (tuple2(tpl_1(data.Tag_Data), tpl_2(data.Tag_Data) + 1));
+        $display("Forwarded to repeat.");
+        rpt.put(0, data);
+    endrule
+
+    rule repeat_output_to_pmu_input;
+        let data <- rpt.get(0);
+        // $display("Repeat output: ", fshow(data));
+        dut.put_token(data);
+    endrule
+
+    rule drain_result;
+        let data <- dut.get_data();
+        $display("data: ", fshow(data), "end.");
+        drained <= drained + 1;
+        // if (drained == 9) begin
+        //     $finish(0);
+        // end
+    endrule
 
 endmodule
 

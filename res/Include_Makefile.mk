@@ -18,7 +18,7 @@ TOPFILE ?= src/Top.$(SRC_EXT)
 TOPMODULE ?= mkTop
 
 BSC_COMP_FLAGS += -keep-fires -aggressive-conditions -no-warn-action-shadowing -check-assert -cpp \
-	+RTS -K128M -RTS -show-range-conflict -show-schedule -Xc "lm" -steps-max-intervals 10000000 -v -show-stats -sched-dot
+	+RTS -K2G -RTS -show-range-conflict -show-schedule -Xc "lm" -steps-max-intervals 10000000 -v -show-stats -sched-dot
 
 BSC_LINK_FLAGS += -keep-fires -Xc "lm" -show-stats
 BSC_PATHS = -p $(BSC_PATH1)src:$(RESOURCES_DIR):+

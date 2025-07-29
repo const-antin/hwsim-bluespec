@@ -72,7 +72,7 @@ module mkRepeatStatic#(Int#(32) num_repeats) (Operation_IFC);
                 if (to_send matches tagged Tag_Ref .r) begin
                     to_send = tagged Tag_Ref tuple2(tpl_1(r), False);
                 end
-                cur = tagged Tag_Data tuple2(to_send, tpl_2(current) + 1);
+                cur = tagged Tag_Data tuple2(to_send, 0);
             end
         end
 
@@ -142,7 +142,7 @@ module mkUnaryMap#(function Tile func (Tile tile)) (Operation_IFC);
     endmethod
 endmodule
 
-module mkBinaryMap#(function Tile func (Tile tile, Tile tile2)) (Operation_IFC);
+module mkBinaryMap#(Int#(32) id, function Tile func (Tile tile, Tile tile2)) (Operation_IFC);
     FIFO#(ChannelMessage) input_fifo1 <- mkFIFO;
     FIFO#(ChannelMessage) input_fifo2 <- mkFIFO;
     FIFO#(ChannelMessage) output_fifo <- mkFIFO;
@@ -157,9 +157,10 @@ module mkBinaryMap#(function Tile func (Tile tile, Tile tile2)) (Operation_IFC);
 
         if (cur_1 matches tagged Tag_Data .current_1 &&& cur_2 matches tagged Tag_Data .current_2) begin
             let out = func(tpl_1(current_1).Tag_Tile, tpl_1(current_2).Tag_Tile);
-            $display("ST1: %d, ST2: %d, count: %d", tpl_2(current_1), tpl_2(current_2), count);
+            $display("ST1: %d, ST2: %d, count: %d, id: %d", tpl_2(current_1), tpl_2(current_2), count, id);
             if (tpl_2(current_2) != tpl_2(current_1)) begin
-                $display("Stop tokens are not the same, left: %d, right: %d", tpl_2(current_1), tpl_2(current_2));
+                $error("id: %d, Stop tokens are not the same at cycle %d, left: %d, right: %d", id, count, tpl_2(current_1), tpl_2(current_2));
+                $finish;
                 // $finish;
             end
             // dynamicAssert(tpl_2(current_2) == tpl_2(current_1), "Stop tokens must be the same");
@@ -182,7 +183,7 @@ module mkBinaryMap#(function Tile func (Tile tile, Tile tile2)) (Operation_IFC);
     endmethod
 endmodule
 
-module mkPromote#(Integer _rank_unused) (Operation_IFC);
+module mkPromote#(Int#(32) rank) (Operation_IFC);
     FIFO#(ChannelMessage) input_fifo <- mkFIFO;
     FIFO#(ChannelMessage) output_fifo <- mkFIFO;
 
@@ -193,7 +194,8 @@ module mkPromote#(Integer _rank_unused) (Operation_IFC);
         if (cur matches tagged Tag_Data .current) begin
             let data = tpl_1(current);
             let st = tpl_2(current);
-            output_fifo.enq(tagged Tag_Data tuple2(data, st + 1));
+            let st_out = (st >= rank) ? st + 1 : st;
+            output_fifo.enq(tagged Tag_Data tuple2(data, st_out));
         end else begin 
             output_fifo.enq(cur);
         end
@@ -306,19 +308,44 @@ module mkTileReader#(Integer num_entries, String filename) (Operation_IFC);
     endmethod
 endmodule
 
+module mkPrinter#(String name) (Operation_IFC);
+    FIFO#(ChannelMessage) input_fifo <- mkFIFO;
+    Reg#(Int#(64)) cc <- mkReg(0);
+
+    rule print;
+        let cur = input_fifo.first;
+        input_fifo.deq;
+
+        $display("[cycle %d] %s: %s", cc, name, fshow(cur));
+    endrule
+
+    rule cc_rule;
+        cc <= cc + 1;
+    endrule
+
+    method Action put(Int#(32) input_port, ChannelMessage msg);
+        input_fifo.enq(msg);
+    endmethod
+
+    method ActionValue#(ChannelMessage) get(Int#(32) output_port);
+        $error("Printer does not support get");
+        return ?;
+    endmethod
+endmodule
+
 module mkTop(Empty);
-    let m1 <- mkBinaryMap(matmul_t_tile);
-    let m2 <- mkBinaryMap(matmul_t_tile);
+    let m1 <- mkBinaryMap(1, matmul_t_tile);
+    let m2 <- mkBinaryMap(2, matmul_t_tile);
 
     let a1 <- mkAccum(add_tile, 1);
     let a2 <- mkAccum(add_tile, 1);
 
-    let m3 <- mkBinaryMap(mul_tile);
+    let m3 <- mkBinaryMap(3, mul_tile);
     let m4 <- mkUnaryMap(silu_tile);
 
     let p5 <- mkPromote(0);
 
-    let m6 <- mkBinaryMap(matmul_t_tile);
+    let m6 <- mkBinaryMap(4, matmul_t_tile);
     let a7 <- mkAccum(add_tile, 1);
 
     rule stimulus;
