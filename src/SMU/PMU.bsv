@@ -4,7 +4,7 @@
 // TODO: Replace loop with find
 // TODO: Remove memory size dependency on tile size, should just have banks be as large as possible
 // TODO: Swap registers for SRAM
-// TODO: rank shouldn't be a parameter, should be stored in a reg and parsed from a config input
+// TODO: rank shouldnt be a parameter, should be stored in a reg and parsed from a config input
 
 package PMU;
 
@@ -19,6 +19,7 @@ import SetFreeList::*;
 import SetUsageTracker::*;
 import Unwrap::*;
 import Operation::*;
+import HelperFunctions::*;
 
 // Interface that just exposes the modules existence
 interface PMU_IFC;
@@ -43,29 +44,30 @@ module mkPMU#(
     FIFO#(ChannelMessage) token_out <- mkFIFO;    // Generated tokens go out here
     FIFO#(ChannelMessage) token_in <- mkFIFO;     // Tokens come back in here
     FIFO#(ChannelMessage) data_out <- mkFIFO;     // Retrieved values go out here
-    
-    // Only internal state needed is the storage FIFO and token counter
+
+    // initialization and cycle count
+    Reg#(Bit#(32)) cycle_count <- mkReg(0);
+    Reg#(Bool) initialized <- mkReg(False);
+    Reg#(Bit#(TLog#(MAX_ENTRIES))) first_entry_initialized_index <- mkReg(0);
+
+    ConfigReg#(Bit#(TLog#(MAX_ENTRIES))) token_counter <- mkConfigReg(0);
+
+    // storage usage tracking
     BankedMemory_IFC mem <- mkBankedMemory;
     SetFreeList_IFC free_list <- mkSetFreeList;
     SetUsageTracker_IFC usage_tracker <- mkSetUsageTracker;
     Reg#(StorageLocation) curr_loc <- mkReg(StorageLocation { set: 0, frame: 0, valid: False });
-    ConfigReg#(Bit#(TLog#(MAX_ENTRIES))) token_counter <- mkConfigReg(0);
-    Reg#(Bit#(32)) cycle_count <- mkReg(0);
-
-    RegFile#(Bit#(TLog#(MAX_ENTRIES)), Maybe#(Bit#(TLog#(MAX_ENTRIES)))) first_entry <- mkRegFileWCF(0, fromInteger(valueOf(MAX_ENTRIES) - 1));    
-    RegFile#(Bit#(TLog#(MAX_ENTRIES)), Bool) token_complete <- mkRegFileWCF(0, fromInteger(valueOf(MAX_ENTRIES) - 1));
-    Vector#(MAX_ENTRIES, ConfigReg#(Maybe#(Bit#(TLog#(MAX_ENTRIES))))) next_table <- replicateM(mkConfigReg(tagged Invalid));
-    // Vector#(MAX_ENTRIES, ConfigReg#(Bit#(TLog#(MAX_ENTRIES)))) pmu_id_table <- replicateM(mkConfigReg(0)); // TODO: Unused for static
-    Reg#(Bit#(TLog#(MAX_ENTRIES))) prev_stored <- mkReg(0);
-
-    let frame_width = valueOf(TLog#(FRAMES_PER_SET));
-    let set_width = valueOf(TLog#(SETS));
-    Reg#(Maybe#(Tuple4#(Bit#(TLog#(MAX_ENTRIES)), Bool, StopToken, Bit#(TLog#(MAX_ENTRIES))))) load_token <- mkReg(tagged Invalid);
-
-    Reg#(Bool) initialized <- mkReg(False);
-    Reg#(Bit#(TLog#(MAX_ENTRIES))) first_entry_initialized_index <- mkReg(0);
-
     ConfigReg#(Maybe#(SET_INDEX)) next_free_set <- mkConfigReg(tagged Invalid);
+
+    // storage chain logic
+    RegFile#(Bit#(TLog#(MAX_ENTRIES)), Maybe#(StorageAddr)) first_entry <- mkRegFileWCF(0, fromInteger(valueOf(MAX_ENTRIES) - 1));    
+    RegFile#(Bit#(TLog#(MAX_ENTRIES)), Bool) token_complete <- mkRegFileWCF(0, fromInteger(valueOf(MAX_ENTRIES) - 1));
+    Vector#(MAX_ENTRIES, ConfigReg#(Maybe#(StorageAddr))) next_table <- replicateM(mkConfigReg(tagged Invalid));
+    // Vector#(MAX_ENTRIES, ConfigReg#(Bit#(TLog#(MAX_ENTRIES)))) pmu_id_table <- replicateM(mkConfigReg(0)); // TODO: Unused for static
+    Reg#(StorageAddr) prev_stored <- mkReg(0);
+
+    // load and deallocate registers
+    Reg#(Maybe#(LoadState)) load_token <- mkReg(tagged Invalid);
     ConfigReg#(Maybe#(Bit#(TLog#(MAX_ENTRIES)))) deallocate_reg <- mkConfigReg(tagged Invalid);
 
     // ============================================================================
@@ -80,9 +82,9 @@ module mkPMU#(
     // Main Logic Rules
     // ============================================================================
 
-    rule deallocate_token (initialized &&& isValid(deallocate_reg));
-        first_entry.upd(deallocate_reg.Valid, tagged Invalid);
-        token_complete.upd(deallocate_reg.Valid, False);
+    rule deallocate_token (initialized &&& deallocate_reg matches tagged Valid .token_id);
+        first_entry.upd(token_id, tagged Invalid);
+        token_complete.upd(token_id, False);
         deallocate_reg <= tagged Invalid;
     endrule
 
@@ -106,43 +108,36 @@ module mkPMU#(
 
         // initialization
         let tile = unwrapTile(tt);
-        let new_st = st;
-        let emit_token = False;
-        if (st >= rank) begin
-            new_st = st - rank;
-            emit_token = True;
-        end
-        StorageLocation new_loc;
-        let set = 0;
-        let frame = 0;
+        let {new_st, emit_token} = processStopToken(st, rank);
 
-        // store the tile, update the next storage location
+        SET_INDEX set;
+        FRAME_INDEX frame; 
+        StorageLocation new_loc;
         if (!curr_loc.valid) begin
             set = next_free_set.Valid;
             frame = 0;
-            mem.write(set, 0, TaggedTile { t: tile, st: st });
             usage_tracker.setFrame(set, 1);
-            new_loc = StorageLocation { set: set, frame: 1, valid: True };
             next_free_set <= tagged Invalid;
+            new_loc = StorageLocation { set: set, frame: 1, valid: True };
         end else begin
             set = curr_loc.set;
             frame = curr_loc.frame;
-            mem.write(set, frame, TaggedTile { t: tile, st: st });
             let full <- usage_tracker.incFrame(set);
-            full = full || emit_token;
-            new_loc = StorageLocation { set: set, frame: frame + 1, valid: !full };
+            let is_full = full || emit_token;
+            new_loc = StorageLocation { set: set, frame: frame + 1, valid: !is_full };
         end
+        mem.write(set, frame, TaggedTile { t: tile, st: st });
         curr_loc <= new_loc;
 
         // update the storage location pointer chain
         if (first_entry.sub(token_counter) matches tagged Invalid) begin
-            let p = pack({set, frame});
+            let p = packLocation(set, frame);
             first_entry.upd(token_counter, tagged Valid p);
             next_table[p] <= tagged Invalid;
             // pmu_id_table[p] <= 0; // TODO: Dynamic pmu ids
             prev_stored <= p;
         end else begin
-            let p = pack({set, frame});
+            let p = packLocation(set, frame);
             next_table[prev_stored] <= tagged Valid p;
             if (prev_stored != p) begin
                 next_table[p] <= tagged Invalid;
@@ -165,7 +160,7 @@ module mkPMU#(
         let token_input = unwrapRef(tt);
         let maybe_packed_loc = first_entry.sub(truncate(token_input.fst));
         if (maybe_packed_loc matches tagged Valid .p) begin
-            load_token <= tagged Valid tuple4(p, token_input.snd, st, truncate(token_input.fst)); // (<set, frame>, deallocate, st, orig_token)
+            load_token <= tagged Valid LoadState { loc: p, deallocate: token_input.snd, st: st, orig_token: truncate(token_input.fst) };
         end else begin
             $display("[ERROR]: Token %d not associated with any data", token_input.fst);
             $finish(0);
@@ -174,25 +169,25 @@ module mkPMU#(
 
     rule continue_load_tile (initialized &&& load_token matches tagged Valid .load_tk_val &&& !isValid(deallocate_reg));
         // $display("Fired continue load tile");
-        let loc_table_entry = tpl_1(load_tk_val); // {set, frame}
-        let deallocate = tpl_2(load_tk_val);
-        let st = tpl_3(load_tk_val);
-        let orig_token = tpl_4(load_tk_val);
+        let loc = load_tk_val.loc;
+        let deallocate = load_tk_val.deallocate;
+        let st = load_tk_val.st;
+        let orig_token = load_tk_val.orig_token;
 
         Bool token_is_complete = token_complete.sub(orig_token);
-        Bool has_next_piece = isValid(next_table[loc_table_entry]);
+        Bool has_next_piece = isValid(next_table[loc]);
 
         if (token_is_complete || has_next_piece) begin
-            SET_INDEX set   = truncate(loc_table_entry >> valueOf(TLog#(FRAMES_PER_SET)));
-            FRAME_INDEX frame = truncate(loc_table_entry);
+            let {set, frame} = unpackLocation(loc);
             let tile = mem.read(set, frame);
             let out_rank = tile.st;
 
             // Check if weve processed all entries for this token
             let next_set = set + 1;
-            if (next_table[loc_table_entry] matches tagged Valid .next_loc) begin
-                next_set = truncate(next_loc >> valueOf(TLog#(FRAMES_PER_SET))); // used to know if we've read every frame in the set
-                load_token <= tagged Valid tuple4(next_loc, deallocate, st, orig_token);
+            if (next_table[loc] matches tagged Valid .next_loc) begin
+                let {next_set_unpacked, _} = unpackLocation(next_loc); // used to know if weve read every frame in the set
+                next_set = next_set_unpacked;
+                load_token <= tagged Valid LoadState { loc: next_loc, deallocate: deallocate, st: st, orig_token: orig_token };
             end else begin
                 load_token <= tagged Invalid;
                 out_rank = rank + st;
@@ -257,8 +252,6 @@ module mkPMU#(
     endrule
 
     rule cycle_counter (initialized);
-        // $display("-------------------------------------------");
-        // $display("[CYCLE COUNTER]: %d", cycle_count);
         cycle_count <= cycle_count + 1;
     endrule
 

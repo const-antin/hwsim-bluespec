@@ -172,4 +172,11 @@ typedef struct {
 
 typedef UInt#(TAdd#(TLog#(SETS), TLog#(FRAMES_PER_SET))) StorageAddr;
 
+typedef struct {
+    StorageAddr loc;
+    Bool deallocate;
+    StopToken st;
+    Bit#(TLog#(MAX_ENTRIES)) orig_token;
+} LoadState deriving(Bits, Eq);
+
 endpackage
