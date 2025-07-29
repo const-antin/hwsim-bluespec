@@ -1,6 +1,8 @@
 // TODO: Make everything work in fifo order. I think this should immediately work as long as I emit the token earlier. 
     // I already have the logic necessary to make sure i don't read data that hasn't been stored (untested)
 
+// TODO: Replace loop with find
+
 package PMU;
 
 import FIFO::*;
