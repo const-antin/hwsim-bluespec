@@ -164,4 +164,12 @@ typedef union tagged {
     EndToken Tag_EndToken;
 } ChannelMessage deriving (Bits, FShow);
 
+typedef struct {
+    SET_INDEX set;
+    FRAME_INDEX frame;
+    Bool valid;
+} StorageLocation deriving(Bits, Eq);
+
+typedef UInt#(TAdd#(TLog#(SETS), TLog#(FRAMES_PER_SET))) StorageAddr;
+
 endpackage

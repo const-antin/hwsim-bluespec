@@ -6,9 +6,17 @@ import Vector::*;
 import FIFO::*;
 import Parameters::*;
 import RegFile::*;
+import ConfigReg::*;        // Added for the new test
+import Operation::*;        // Added for the new test
+// import YourRepeatPackage::*;  // Uncomment and specify the correct package for mkRepeatStatic
 
+// Existing test parameters
 typedef 23 NUM_TEST_VALUES;
 typedef 1 RANK;
+
+// New test parameters  
+typedef 1 NUM_ENTRIES;
+typedef 4 ENTRY_SIZE;
 
 // Function to print a tile matrix
 // function Action printTile(TaggedTile tile);
@@ -24,6 +32,9 @@ typedef 1 RANK;
 //     endaction;
 // endfunction
 
+// ============================================================================
+// Original comprehensive test module
+// ============================================================================
 (* synthesize *)
 module mkTestPMU();
     PMU_IFC pmu <- mkPMU(fromInteger(valueOf(RANK)));
@@ -139,7 +150,7 @@ module mkTestPMU();
             end
             tagged Tag_EndToken .et: begin
                 $display("Test: End token received");
-                $display("All tests completed");
+                $display("All tests completed at cycle %d", pmu.get_cycle_count());
                 $finish(0);
             end
             default: begin
@@ -150,5 +161,79 @@ module mkTestPMU();
     endrule
 
 endmodule
+
+// ============================================================================
+// Stop token test with repeat module
+// ============================================================================
+(* synthesize *)
+module mkTestPMUStopToken(Empty);
+    let rank = 3;
+    PMU_IFC dut <- mkPMU(rank);
+    let rpt <- mkRepeatStatic(2);  
+    let drained <- mkReg(0);
+    
+    Reg#(UInt#(32)) state <- mkReg(1);
+
+    rule push if (state % fromInteger(valueOf(ENTRY_SIZE)) != 0 && state < 10 * fromInteger(valueOf(ENTRY_SIZE)));
+        let data = tagged Tag_Data (tuple2(tagged Tag_Tile (0), 0));
+        dut.put_data(data);
+        state <= state + 1;
+    endrule
+
+    rule push_2 if (state % fromInteger(valueOf(ENTRY_SIZE)) == 0);
+        let data = tagged Tag_Data (tuple2(tagged Tag_Tile (1), rank));
+        dut.put_data(data);
+        state <= state + 1;
+        $display("pushed everything.");
+    endrule
+
+    rule token_output_to_repeat_input;
+        let data <- dut.get_token();
+        // data = tagged Tag_Data (tuple2(tpl_1(data.Tag_Data), tpl_2(data.Tag_Data) + 1));
+        $display("Forwarded to repeat.");
+        rpt.put(0, data);
+    endrule
+
+    rule repeat_output_to_pmu_input;
+        let data <- rpt.get(0);
+        // $display("Repeat output: ", fshow(data));
+        dut.put_token(data);
+    endrule
+
+    rule drain_result;
+        let data <- dut.get_data();
+        $display("data: ", fshow(data), "end.");
+        drained <= drained + 1;
+        // if (drained == 9) begin
+        //     $finish(0);
+        // end
+    endrule
+
+endmodule
+
+// ============================================================================
+// Helper modules (you may need to define mkRepeatStatic if its not available)
+// ============================================================================
+
+// Uncomment and modify this if you dont have mkRepeatStatic available elsewhere
+/*
+interface RepeatStatic_IFC;
+    method Action put(Int#(32) i, ChannelMessage msg);
+    method ActionValue#(ChannelMessage) get(Int#(32) i);
+endinterface
+
+module mkRepeatStatic#(Integer delay)(RepeatStatic_IFC);
+    FIFO#(ChannelMessage) fifo <- mkSizedFIFO(delay + 1);
+    
+    method Action put(Int#(32) i, ChannelMessage msg);
+        fifo.enq(msg);
+    endmethod
+    
+    method ActionValue#(ChannelMessage) get(Int#(32) i);
+        fifo.deq();
+        return fifo.first();
+    endmethod
+endmodule
+*/
 
 endpackage
