@@ -1173,4 +1173,77 @@ module mkPrinter#(String name) (Operation_IFC);
         return ?;
     endmethod
 endmodule
+
+module mkTop(Empty);
+    let m1 <- mkBinaryMap(1, matmul_t_tile);
+    let m2 <- mkBinaryMap(2, matmul_t_tile);
+
+    let a1 <- mkAccum(add_tile, 1);
+    let a2 <- mkAccum(add_tile, 1);
+
+    let m3 <- mkBinaryMap(3, mul_tile);
+    let m4 <- mkUnaryMap(silu_tile);
+
+    let p5 <- mkPromote(0);
+
+    let m6 <- mkBinaryMap(4, matmul_t_tile);
+    let a7 <- mkAccum(add_tile, 1);
+
+    rule stimulus;
+        let tile = 5;
+        let msg = tagged Tag_Data tuple2(tagged Tag_Tile tile, 5);
+        m1.put(0, msg);
+        m1.put(1, msg);
+        m2.put(0, msg);
+        m2.put(1, msg);
+        m6.put(1, msg);
+    endrule
+
+    rule pass_m1;
+        let msg <- m1.get(0);
+        a1.put(0, msg);
+    endrule
+
+    rule pass_m2;
+        let msg <- m2.get(0);
+        a2.put(0, msg);
+    endrule
+
+    rule pass_a1;
+        let msg <- a1.get(0);
+        m3.put(0, msg);
+    endrule
+
+    rule pass_a2;
+        let msg <- a2.get(0);
+        m4.put(0, msg);
+    endrule
+
+    rule pass_m4;
+        let msg <- m4.get(0);
+        m3.put(1, msg);
+    endrule
+
+    rule pass_m3;
+        let msg <- m3.get(0);
+        p5.put(0, msg);
+    endrule
+
+    rule pass_p5;
+        let msg <- p5.get(0);
+        m6.put(0, msg);
+    endrule
+
+    rule pass_m6;
+        let msg <- m6.get(0);
+        a7.put(0, msg);
+    endrule
+
+    rule drain;
+        let msg <- a7.get(0);
+        $display("Message: %s", fshow(msg));
+        $finish;
+    endrule
+endmodule
+
 endpackage
