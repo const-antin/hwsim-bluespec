@@ -154,10 +154,24 @@ typedef union tagged {
     Scalar Tag_Scalar;
 } Data deriving (Bits, FShow, Eq);
 
+typedef UInt#(16) InstructionIdx;
+
+typedef enum {
+    ComputeType_Output,
+    ComputeType_PCU,
+    ComputeType_PMU
+} ComputeType deriving (Bits, Eq, FShow);
+
 typedef struct {
-    UInt#(16) ptr;
-    UInt#(16) port_idx;
+    ComputeType compute_type;
+    InstructionIdx instruction_idx;
 } Instruction_Ptr deriving (Bits, FShow, Eq);
+
+typedef struct {
+    Bool is_pcu;
+    UInt#(16) ptr;
+    UInt#(8) port_idx;
+} Instruction_Ptr_With_Target deriving (Bits, FShow, Eq);
 
 typedef union tagged {
     Tuple2#(Data, StopToken) Tag_Data;

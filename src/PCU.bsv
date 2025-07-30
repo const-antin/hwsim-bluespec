@@ -8,8 +8,8 @@ import ALU::*;
 import StmtFSM::*;
 
 interface PCU_IFC;
-    method Action put_instruction(Instruction instruction);
-    method ActionValue#(Instruction_Ptr) get_instruction_request();
+    method Action put_instruction(PCUAndTargetConfig instruction);
+    method ActionValue#(InstructionIdx) get_instruction_request();
     method ActionValue#(ChannelMessage) get(Integer port);
     method Action put(Integer port, ChannelMessage msg);
     method Action done(); // get next done ack
@@ -17,9 +17,9 @@ endinterface
 
 typedef union tagged {
     void Tag_Idle;
-    Instruction_Ptr Tag_Requesting_Config;
-    Instruction_Ptr Tag_Waiting_For_Config;
-    Tuple2#(Instruction_Ptr, Instruction) Tag_Computing;
+    InstructionIdx Tag_Requesting_Config;
+    InstructionIdx Tag_Waiting_For_Config;
+    Tuple2#(InstructionIdx, PCUAndTargetConfig) Tag_Computing;
 } PCUState deriving (Bits, Eq, FShow);
 
 module mkPCU(PCU_IFC);
@@ -57,45 +57,45 @@ module mkPCU(PCU_IFC);
     Reg#(Vector#(NUM_INPUTS_PER_PCU, Bool)) done_inputs <- mkReg(replicate(False));
     Reg#(Vector#(NUM_OUTPUTS_PER_PCU, Bool)) done_outputs <- mkReg(replicate(False));
 
-    FIFO#(Instruction_Ptr) instruction_request <- mkFIFO;
-    FIFO#(Instruction) instruction_response <- mkFIFO;
+    FIFO#(InstructionIdx) instruction_request <- mkFIFO;
+    FIFO#(PCUAndTargetConfig) instruction_response <- mkFIFO;
 
     // Configure the PCU to the next instruction
     for (Integer i = 0; i < fromInteger(valueOf(NUM_INPUTS_PER_PCU)); i = i + 1) begin
 
         rule configure_first if (inputs[i].first matches tagged Tag_Instruction .instruction_ptr &&& state matches tagged Tag_Idle);
             // $display("Idle to Requesting Config");
-            state <= tagged Tag_Requesting_Config instruction_ptr;
+            state <= tagged Tag_Requesting_Config instruction_ptr.instruction_idx;
             inputs[i].deq;
         endrule
 
-        rule swallow_configs_while_requesting if (inputs[i].first matches tagged Tag_Instruction .incoming_instruction_ptr &&& state matches tagged Tag_Requesting_Config .instruction_ptr &&& incoming_instruction_ptr == instruction_ptr);
+        rule swallow_configs_while_requesting if (inputs[i].first matches tagged Tag_Instruction .incoming_instruction_ptr &&& state matches tagged Tag_Requesting_Config .instruction_idx &&& incoming_instruction_ptr.instruction_idx == instruction_idx);
             // $display("Swallowing redundant instruction");
             inputs[i].deq;
         endrule
 
-        rule swallow_configs_while_waiting if (inputs[i].first matches tagged Tag_Instruction .incoming_instruction_ptr &&& state matches tagged Tag_Waiting_For_Config .instruction_ptr &&& incoming_instruction_ptr == instruction_ptr);    
+        rule swallow_configs_while_waiting if (inputs[i].first matches tagged Tag_Instruction .incoming_instruction_ptr &&& state matches tagged Tag_Waiting_For_Config .instruction_idx &&& incoming_instruction_ptr.instruction_idx == instruction_idx);    
             // $display("Swallowing redundant instruction");
             inputs[i].deq;
         endrule
 
-        rule swallow_configs_while_computing if (inputs[i].first matches tagged Tag_Instruction .incoming_instruction_ptr &&& state matches tagged Tag_Computing {.ptr, .instruction} &&& incoming_instruction_ptr == ptr);
+        rule swallow_configs_while_computing if (inputs[i].first matches tagged Tag_Instruction .incoming_instruction_ptr &&& state matches tagged Tag_Computing {.instruction_idx, .instruction} &&& incoming_instruction_ptr.instruction_idx == instruction_idx);
             // $display("Swallowing redundant instruction");
             inputs[i].deq;
         endrule
     end
 
-    rule request_config if (state matches tagged Tag_Requesting_Config .instruction_ptr);
+    rule request_config if (state matches tagged Tag_Requesting_Config .instruction_idx);
         // $display("Requesting Config");
-        instruction_request.enq(instruction_ptr);
-        state <= tagged Tag_Waiting_For_Config instruction_ptr;
+        instruction_request.enq(instruction_idx);
+        state <= tagged Tag_Waiting_For_Config instruction_idx;
     endrule
 
-    rule program_config if (state matches tagged Tag_Waiting_For_Config .instruction_ptr);
+    rule program_config if (state matches tagged Tag_Waiting_For_Config .instruction_idx);
         // $display("Waiting for config -> Tag_computing");
-        let instruction = instruction_response.first;
+        let instruction = instruction_response.first.pcu_config;
         instruction_response.deq;
-        state <= tagged Tag_Computing tuple2(instruction_ptr, instruction);
+        state <= tagged Tag_Computing tuple2(instruction_idx, instruction_response.first);
 
         case (instruction.op) matches
             tagged Tag_UnaryMap .unary_map_inst:
@@ -201,7 +201,7 @@ module mkPCU(PCU_IFC);
     endrule
 
     // Transition: Configuring -> Idle
-    rule config_to_idle if (state matches tagged Tag_Computing {.ptr, .instruction} &&& map(isValid, instruction.input_ports) == done_inputs &&& map(isValid, instruction.output_ports) == done_outputs);
+    rule config_to_idle if (state matches tagged Tag_Computing {.instruction_idx, .instruction} &&& map(isValid, instruction.pcu_config.input_ports) == done_inputs &&& map(isValid, instruction.pcu_config.output_ports) == done_outputs);
         // $display("Configuring to Idle because selected inputs is %s and done inputs is %s and selected outputs is %s and done outputs is %s", fshow(map(isValid, instruction.input_ports)), fshow(done_inputs), fshow(map(isValid, instruction.output_ports)), fshow(done_outputs));
         state <= tagged Tag_Idle;
         done_inputs <= replicate(False);
@@ -211,11 +211,11 @@ module mkPCU(PCU_IFC);
     // Handle input to compute unit while being configured
     for (Integer i = 0; i < fromInteger(valueOf(NUM_INPUTS_PER_PCU)); i = i + 1) begin
         rule handle_compute_input if (
-            state matches tagged Tag_Computing {.ptr, .instruction} &&& 
-            instruction.input_ports[i] matches tagged Valid .in_idx &&&
+            state matches tagged Tag_Computing {.instruction_idx, .instruction} &&& 
+            instruction.pcu_config.input_ports[i] matches tagged Valid .in_idx &&&
             !done_inputs[in_idx]);
 
-            InstructionOp op = instruction.op;
+            InstructionOp op = instruction.pcu_config.op;
             let in = inputs[in_idx].first;
             inputs[in_idx].deq;
             // $display("Handling compute input idx: %d, in_idx: %d, in: %s", i, in_idx, fshow(in));
@@ -301,7 +301,7 @@ module mkPCU(PCU_IFC);
     end
 
     for (Integer j = 0; j < fromInteger(valueOf(NUM_OUTPUTS_PER_PCU)); j = j + 1) begin
-        rule drain_output if (state matches tagged Tag_Computing {.ptr, .instruction} &&& instruction.output_ports[j] matches tagged Valid .out_idx);
+        rule drain_output if (state matches tagged Tag_Computing {.instruction_idx, .instruction} &&& instruction.pcu_config.output_ports[j] matches tagged Valid .out_idx);
             let out = submodule_outputs[j].first;
             submodule_outputs[j].deq;
             external_outputs[out_idx].enq(out);
@@ -327,7 +327,7 @@ module mkPCU(PCU_IFC);
     //     // $finish(-1);
     // endrule
 
-    method ActionValue#(Instruction_Ptr) get_instruction_request();
+    method ActionValue#(InstructionIdx) get_instruction_request();
         return instruction_request.first;
     endmethod
 
@@ -340,7 +340,7 @@ module mkPCU(PCU_IFC);
         inputs[port_id].enq(msg);
     endmethod
 
-    method Action put_instruction(Instruction instruction);
+    method Action put_instruction(PCUAndTargetConfig instruction);
         instruction_response.enq(instruction);
     endmethod
 
@@ -368,24 +368,27 @@ module mkPCUReconfigurationTest(Empty);
         cons(tagged Valid 0, nil),
         replicate(tagged Invalid));
     
-    Instruction add_instruction = Instruction {
+    PCUInstruction add_instruction = PCUInstruction {
         op: tagged Tag_BinaryMap BinaryMapConfig {op: ADD},
         input_ports: input_select_2,
         output_ports: output_select_1,
         debug_id: 0
     };
 
+    InstructionIdx dummy_idx = 0;
+    InstructionIdx dummy_idx_2 = 1;
+
     Instruction_Ptr dummy_ptr = Instruction_Ptr {
-        ptr: 0,
-        port_idx: 0
+        instruction_idx: dummy_idx,
+        compute_type: ComputeType_PCU
     };
 
     Instruction_Ptr dummy_ptr_2 = Instruction_Ptr {
-        ptr: 1,
-        port_idx: 0
+        instruction_idx: dummy_idx_2,
+        compute_type: ComputeType_PCU
     };
 
-    Instruction repeat_static_instruction = Instruction {
+    PCUInstruction repeat_static_instruction = PCUInstruction {
         op: tagged Tag_RepeatStatic RepeatStaticConfig {count: 2},
         input_ports: input_select_1,
         output_ports: output_select_1,
@@ -404,7 +407,12 @@ module mkPCUReconfigurationTest(Empty);
                     pcu.put(1, tagged Tag_Instruction dummy_ptr);
                 endaction
                 action
-                    pcu.put_instruction(add_instruction);
+                    pcu.put_instruction(PCUAndTargetConfig {
+                        pcu_config: add_instruction,
+                        target: ComponentTarget {
+                            port_mappings: replicate(tagged Invalid)
+                        }
+                    });
                     pcu.put(0, tagged Tag_Data zero_tile);
                     pcu.put(1, tagged Tag_Data one_tile);
                 endaction
@@ -413,7 +421,12 @@ module mkPCUReconfigurationTest(Empty);
                     pcu.put(1, tagged Tag_EndToken);
                 endaction
                 action
-                    pcu.put_instruction(repeat_static_instruction);
+                    pcu.put_instruction(PCUAndTargetConfig {
+                        pcu_config: repeat_static_instruction,
+                        target: ComponentTarget {
+                            port_mappings: replicate(tagged Invalid)
+                        }
+                    });
                     pcu.put(1, tagged Tag_Instruction dummy_ptr_2);
                 endaction
                 action

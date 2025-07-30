@@ -1,5 +1,8 @@
 package Parameters;
 
+typedef 128 NUM_PCU_INSTRUCTIONS;
+typedef 128 NUM_PMU_INSTRUCTIONS;
+
 typedef 8 NUM_PCUS;
 typedef 8 NUM_PMUS;
 

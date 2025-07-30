@@ -128,4 +128,33 @@ typedef struct {
     Vector#(NUM_OUTPUTS_PER_PCU, Maybe#(UInt#(TLog#(NUM_OUTPUTS_PER_PCU)))) output_ports;
     InstructionOp op;
     UInt#(32) debug_id;
-} Instruction deriving (Bits, Eq, FShow);
+} PCUInstruction deriving (Bits, Eq, FShow);
+
+typedef struct {
+
+} PMUInstruction deriving (Bits, Eq, FShow);
+
+// Type definitions matching the Rust implementation
+typedef UInt#(TLog#(TMax#(NUM_PCUS, NUM_PMUS))) ComponentIdx;
+typedef UInt#(8) PortIdx;
+
+// Reserved instruction indices
+// OUTPUT_INSTRUCTION = 0;
+// INPUT_INSTRUCTION = 0;
+
+// Component target mapping
+typedef struct {
+    Vector#(TMax#(NUM_OUTPUTS_PER_PCU, NUM_OUTPUTS_PER_PMU), Maybe#(Tuple2#(Instruction_Ptr, PortIdx))) port_mappings;
+} ComponentTarget deriving (Bits, Eq, FShow);
+
+// PCU configuration with target
+typedef struct {
+    PCUInstruction pcu_config;
+    ComponentTarget target;
+} PCUAndTargetConfig deriving (Bits, Eq, FShow);
+
+// PMU configuration with target (placeholder for future PMU support)
+typedef struct {
+    PMUInstruction pmu_config;
+    ComponentTarget target;
+} PMUAndTargetConfig deriving (Bits, Eq, FShow);
