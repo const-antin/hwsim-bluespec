@@ -140,8 +140,6 @@ endfunction
 
 typedef Bit#(32) Ref_Inner;
 typedef Tuple2#(Ref_Inner, Bool) Ref; // Reference, deallocate
-typedef struct {
-} EndToken deriving (Bits, Eq, FShow);
 
 typedef struct {
     Tile t;
@@ -164,7 +162,7 @@ typedef struct {
 typedef union tagged {
     Tuple2#(Data, StopToken) Tag_Data;
     Instruction_Ptr Tag_Instruction;
-    EndToken Tag_EndToken;
+    void Tag_EndToken;
 } ChannelMessage deriving (Bits, FShow, Eq);
 
 endpackage

@@ -12,7 +12,7 @@ interface PCU_IFC;
     method ActionValue#(Instruction_Ptr) get_instruction_request();
     method ActionValue#(ChannelMessage) get(Integer port);
     method Action put(Integer port, ChannelMessage msg);
-    method Action done();
+    method Action done(); // get next done ack
 endinterface
 
 typedef union tagged {
@@ -62,38 +62,37 @@ module mkPCU(PCU_IFC);
 
     // Configure the PCU to the next instruction
     for (Integer i = 0; i < fromInteger(valueOf(NUM_INPUTS_PER_PCU)); i = i + 1) begin
-        rule configure if (inputs[i].first matches tagged Tag_Instruction .instruction_ptr);
-            if (state matches tagged Tag_Idle) begin
-                $display("Idle to Requesting Config");
-                state <= tagged Tag_Requesting_Config instruction_ptr;
-                inputs[i].deq;
-            end
-            if (state matches tagged Tag_Computing {.ptr, .instruction}
-            &&& ptr == instruction_ptr) begin
-                $display("Swallowed redundant instruction at [%d]", i);
-                inputs[i].deq;
-            end
-            if (state matches tagged Tag_Waiting_For_Config .instruction_ptr
-            &&& instruction_ptr == instruction_ptr) begin
-                $display("Swallowed redundant instruction at [%d]", i);
-                inputs[i].deq;
-            end
-            if (state matches tagged Tag_Requesting_Config .instruction_ptr
-            &&& instruction_ptr == instruction_ptr) begin
-                $display("Swallowed redundant instruction at [%d]", i);
-                inputs[i].deq;
-            end
+
+        rule configure_first if (inputs[i].first matches tagged Tag_Instruction .instruction_ptr &&& state matches tagged Tag_Idle);
+            // $display("Idle to Requesting Config");
+            state <= tagged Tag_Requesting_Config instruction_ptr;
+            inputs[i].deq;
+        endrule
+
+        rule swallow_configs_while_requesting if (inputs[i].first matches tagged Tag_Instruction .incoming_instruction_ptr &&& state matches tagged Tag_Requesting_Config .instruction_ptr &&& incoming_instruction_ptr == instruction_ptr);
+            // $display("Swallowing redundant instruction");
+            inputs[i].deq;
+        endrule
+
+        rule swallow_configs_while_waiting if (inputs[i].first matches tagged Tag_Instruction .incoming_instruction_ptr &&& state matches tagged Tag_Waiting_For_Config .instruction_ptr &&& incoming_instruction_ptr == instruction_ptr);    
+            // $display("Swallowing redundant instruction");
+            inputs[i].deq;
+        endrule
+
+        rule swallow_configs_while_computing if (inputs[i].first matches tagged Tag_Instruction .incoming_instruction_ptr &&& state matches tagged Tag_Computing {.ptr, .instruction} &&& incoming_instruction_ptr == ptr);
+            // $display("Swallowing redundant instruction");
+            inputs[i].deq;
         endrule
     end
 
     rule request_config if (state matches tagged Tag_Requesting_Config .instruction_ptr);
-        $display("Requesting Config");
+        // $display("Requesting Config");
         instruction_request.enq(instruction_ptr);
         state <= tagged Tag_Waiting_For_Config instruction_ptr;
     endrule
 
     rule program_config if (state matches tagged Tag_Waiting_For_Config .instruction_ptr);
-        $display("Waiting for config -> Tag_computing");
+        // $display("Waiting for config -> Tag_computing");
         let instruction = instruction_response.first;
         instruction_response.deq;
         state <= tagged Tag_Computing tuple2(instruction_ptr, instruction);
@@ -201,6 +200,14 @@ module mkPCU(PCU_IFC);
         endcase
     endrule
 
+    // Transition: Configuring -> Idle
+    rule config_to_idle if (state matches tagged Tag_Computing {.ptr, .instruction} &&& map(isValid, instruction.input_ports) == done_inputs &&& map(isValid, instruction.output_ports) == done_outputs);
+        // $display("Configuring to Idle because selected inputs is %s and done inputs is %s and selected outputs is %s and done outputs is %s", fshow(map(isValid, instruction.input_ports)), fshow(done_inputs), fshow(map(isValid, instruction.output_ports)), fshow(done_outputs));
+        state <= tagged Tag_Idle;
+        done_inputs <= replicate(False);
+        done_outputs <= replicate(False);
+    endrule
+
     // Handle input to compute unit while being configured
     for (Integer i = 0; i < fromInteger(valueOf(NUM_INPUTS_PER_PCU)); i = i + 1) begin
         rule handle_compute_input if (
@@ -211,7 +218,7 @@ module mkPCU(PCU_IFC);
             InstructionOp op = instruction.op;
             let in = inputs[in_idx].first;
             inputs[in_idx].deq;
-            $display("Handling compute input idx: %d, in_idx: %d, in: %s", i, in_idx, fshow(in));
+            // $display("Handling compute input idx: %d, in_idx: %d, in: %s", i, in_idx, fshow(in));
             UInt#(32) idx = fromInteger(i);
             case (op) matches
                 tagged Tag_Accumulate .accumulate_inst: begin
@@ -279,10 +286,10 @@ module mkPCU(PCU_IFC);
             endcase
 
             if (in matches tagged Tag_EndToken) begin
+                // $display("Setting done_inputs[%d] to True", i);
                 done_inputs[i] <= True;
             end
         endrule
-
         // rule or_else;
         //     $display("State: %s", fshow(state));
         //     $display("Input[%d]: %s", i, fshow(inputs[i].first));
@@ -293,15 +300,15 @@ module mkPCU(PCU_IFC);
 
     end
 
-    for (Integer i = 0; i < fromInteger(valueOf(NUM_OUTPUTS_PER_PCU)); i = i + 1) begin
-        rule drain_output if (state matches tagged Tag_Computing {.ptr, .instruction} &&& instruction.output_ports[i] matches tagged Valid .out_idx);
-            let out = submodule_outputs[i].first;
-            submodule_outputs[i].deq;
+    for (Integer j = 0; j < fromInteger(valueOf(NUM_OUTPUTS_PER_PCU)); j = j + 1) begin
+        rule drain_output if (state matches tagged Tag_Computing {.ptr, .instruction} &&& instruction.output_ports[j] matches tagged Valid .out_idx);
+            let out = submodule_outputs[j].first;
+            submodule_outputs[j].deq;
             external_outputs[out_idx].enq(out);
 
             if (out matches tagged Tag_EndToken) begin
-                done_outputs[i] <= True;
-                $display("Setting done_outputs[%d] to True", i);
+                done_outputs[j] <= True;
+                // $display("Setting done_outputs[%d] to True", j);
             end
         endrule
     end
@@ -314,20 +321,17 @@ module mkPCU(PCU_IFC);
     //     end
     // endrule
 
-    // Transition: Configuring -> Idle
-    rule config_to_idle if (state matches tagged Tag_Computing {.ptr, .instruction} &&& map(isValid, instruction.input_ports) == done_inputs &&& map(isValid, instruction.output_ports) == done_outputs);
-        $display("Configuring to Idle because selected inputs is %s and done inputs is %s and selected outputs is %s and done outputs is %s", fshow(map(isValid, instruction.input_ports)), fshow(done_inputs), fshow(map(isValid, instruction.output_ports)), fshow(done_outputs));
-        state <= tagged Tag_Idle;
-    endrule
+    // rule config_not_to_idle if (state matches tagged Tag_Computing {.ptr, .instruction} &&& map(isValid, instruction.input_ports) == done_inputs &&& map(isValid, instruction.output_ports) == done_outputs);
+    //     $display("Inputs done: %s and selected_inputs: %s", fshow(done_inputs), fshow(map(isValid, instruction.input_ports)));
+    //     $display("Outputs done: %s and selected_outputs: %s", fshow(done_outputs), fshow(map(isValid, instruction.output_ports)));
+    //     // $finish(-1);
+    // endrule
 
     method ActionValue#(Instruction_Ptr) get_instruction_request();
         return instruction_request.first;
     endmethod
 
     method ActionValue#(ChannelMessage) get(Integer port_id);
-        if (external_outputs[port_id].first matches tagged Tag_EndToken) begin
-            done_outputs[port_id] <= True;
-        end
         external_outputs[port_id].deq;
         return external_outputs[port_id].first;
     endmethod
@@ -341,8 +345,7 @@ module mkPCU(PCU_IFC);
     endmethod
 
     method Action done();
-        done_inputs <= replicate(False);
-        done_outputs <= replicate(False);
+        // todo.
     endmethod
 endmodule
 
@@ -372,18 +375,18 @@ module mkPCUReconfigurationTest(Empty);
         debug_id: 0
     };
 
-    Instruction_Ptr dummy_ptr_0 = Instruction_Ptr {
+    Instruction_Ptr dummy_ptr = Instruction_Ptr {
         ptr: 0,
         port_idx: 0
     };
 
-    Instruction_Ptr dummy_ptr_1 = Instruction_Ptr {
+    Instruction_Ptr dummy_ptr_2 = Instruction_Ptr {
         ptr: 1,
         port_idx: 0
     };
 
     Instruction repeat_static_instruction = Instruction {
-        op: tagged Tag_RepeatStatic RepeatStaticConfig {count: 4},
+        op: tagged Tag_RepeatStatic RepeatStaticConfig {count: 2},
         input_ports: input_select_1,
         output_ports: output_select_1,
         debug_id: 1
@@ -397,8 +400,8 @@ module mkPCUReconfigurationTest(Empty);
         par
             seq // Data Inputs
                 action
-                    pcu.put(0, tagged Tag_Instruction dummy_ptr_0);
-                    pcu.put(1, tagged Tag_Instruction dummy_ptr_0);
+                    pcu.put(0, tagged Tag_Instruction dummy_ptr);
+                    pcu.put(1, tagged Tag_Instruction dummy_ptr);
                 endaction
                 action
                     pcu.put_instruction(add_instruction);
@@ -411,7 +414,7 @@ module mkPCUReconfigurationTest(Empty);
                 endaction
                 action
                     pcu.put_instruction(repeat_static_instruction);
-                    pcu.put(0, tagged Tag_Instruction dummy_ptr_1);
+                    pcu.put(1, tagged Tag_Instruction dummy_ptr_2);
                 endaction
                 action
                     pcu.put(0, tagged Tag_Data two_tile);

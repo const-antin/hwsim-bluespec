@@ -41,7 +41,6 @@ endfunction
 
 interface Operation_IFC;
     method Action put(UInt#(32) input_port, ChannelMessage msg);
-    method ActionValue#(ChannelMessage) get(UInt#(32) output_port);
 endinterface
 
 interface Accum_IFC;
@@ -49,11 +48,12 @@ interface Accum_IFC;
     method Action set_cfg(AccumulateConfig cfg);
 endinterface
 
-module mkAccum#(ALU_IFC alu) (Accum_IFC);
-    FIFO#(ChannelMessage) input_fifo <- mkFIFO;
-    FIFO#(ChannelMessage) output_fifo <- mkFIFO;
+module mkAccum#(    
+    FIFO#(ChannelMessage) output_fifo,
+    ALU_IFC alu) (Accum_IFC);
     Reg#(AccumulateConfig) cfg <- mkReg(AccumulateConfig{op: ADD, rank: 0, init: 0});
 
+    FIFO#(ChannelMessage) input_fifo <- mkFIFO;
     Reg#(Maybe#(Tile)) acc <- mkReg(tagged Invalid);
 
     rule do_accum if (input_fifo.first matches tagged Tag_Data .current);
@@ -88,11 +88,6 @@ module mkAccum#(ALU_IFC alu) (Accum_IFC);
         method Action put(UInt#(32) input_port, ChannelMessage msg);
             input_fifo.enq(msg);
         endmethod
-
-        method ActionValue#(ChannelMessage) get(UInt#(32) output_port);
-            output_fifo.deq;
-            return output_fifo.first;
-        endmethod
     endinterface
 endmodule
 
@@ -101,11 +96,11 @@ interface RepeatStatic_IFC;
     method Action set_cfg(RepeatStaticConfig cfg);
 endinterface
 
-module mkRepeatStatic (RepeatStatic_IFC);
+module mkRepeatStatic#(
+    FIFO#(ChannelMessage) output_fifo
+) (RepeatStatic_IFC);
+    FIFO#(ChannelMessage) input_fifo <- mkFIFO;
     Reg#(RepeatStaticConfig) cfg <- mkReg(RepeatStaticConfig{count: 0});
-
-    FIFOF#(ChannelMessage) input_fifo <- mkFIFOF;
-    FIFO#(ChannelMessage) output_fifo <- mkFIFO;
 
     Reg#(UInt#(16)) count <- mkReg(0);
 
@@ -147,11 +142,6 @@ module mkRepeatStatic (RepeatStatic_IFC);
         method Action put(UInt#(32) input_port, ChannelMessage msg);
             input_fifo.enq(msg);
         endmethod
-
-        method ActionValue#(ChannelMessage) get(UInt#(32) output_port);
-            output_fifo.deq;
-            return output_fifo.first;
-        endmethod
     endinterface
 endmodule
 
@@ -160,9 +150,11 @@ interface UnaryMap_IFC;
     method Action set_cfg(UnaryMapConfig cfg);
 endinterface
 
-module mkUnaryMap#(ALU_IFC alu) (UnaryMap_IFC);
+module mkUnaryMap#(
+    FIFO#(ChannelMessage) output_fifo,
+    ALU_IFC alu
+) (UnaryMap_IFC);
     FIFO#(ChannelMessage) input_fifo <- mkFIFO;
-    FIFO#(ChannelMessage) output_fifo <- mkFIFO;
 
     Reg#(UnaryMapConfig) cfg <- mkReg(UnaryMapConfig{op: ADD});
 
@@ -184,11 +176,6 @@ module mkUnaryMap#(ALU_IFC alu) (UnaryMap_IFC);
         method Action put(UInt#(32) input_port, ChannelMessage msg);
             input_fifo.enq(msg);
         endmethod
-
-        method ActionValue#(ChannelMessage) get(UInt#(32) output_port);
-            output_fifo.deq;
-            return output_fifo.first;
-        endmethod
     endinterface
 endmodule
 
@@ -197,10 +184,13 @@ interface BinaryMap_IFC;
     method Action set_cfg(BinaryMapConfig cfg);
 endinterface
 
-module mkBinaryMap#(ALU_IFC alu) (BinaryMap_IFC);
+module mkBinaryMap#(
+    FIFO#(ChannelMessage) output_fifo,
+    ALU_IFC alu
+) (BinaryMap_IFC);
     FIFO#(ChannelMessage) input_fifo1 <- mkFIFO;
     FIFO#(ChannelMessage) input_fifo2 <- mkFIFO;
-    FIFO#(ChannelMessage) output_fifo <- mkFIFO;
+
     Reg#(BinaryMapConfig) cfg <- mkReg(BinaryMapConfig{op: ADD});
     Reg#(Int#(32)) count <- mkReg(0);
 
@@ -223,6 +213,10 @@ module mkBinaryMap#(ALU_IFC alu) (BinaryMap_IFC);
             output_fifo.enq(tagged Tag_Data tuple2(tagged Tag_Tile out, tpl_2(current_1)));
             count <= count + 1;
         end
+
+        if (cur_1 matches tagged Tag_EndToken &&& cur_2 matches tagged Tag_EndToken) begin
+            output_fifo.enq(tagged Tag_EndToken);
+        end
     endrule
 
     method Action set_cfg(BinaryMapConfig cfg_in);
@@ -237,11 +231,6 @@ module mkBinaryMap#(ALU_IFC alu) (BinaryMap_IFC);
                 input_fifo2.enq(msg);
             end
         endmethod
-
-        method ActionValue#(ChannelMessage) get(UInt#(32) output_port);
-            output_fifo.deq;
-            return output_fifo.first;
-        endmethod
     endinterface
 endmodule
 
@@ -250,10 +239,12 @@ interface Promote_IFC;
     method Action set_cfg(PromoteConfig cfg);
 endinterface
 
-module mkPromote (Promote_IFC);
-    Reg#(PromoteConfig) cfg <- mkReg(PromoteConfig{rank: 0});
+module mkPromote #(
+    FIFO#(ChannelMessage) output_fifo
+) (Promote_IFC);
     FIFO#(ChannelMessage) input_fifo <- mkFIFO;
-    FIFO#(ChannelMessage) output_fifo <- mkFIFO;
+
+    Reg#(PromoteConfig) cfg <- mkReg(PromoteConfig{rank: 0});
 
     rule do_promote;
         let cur = input_fifo.first;
@@ -277,11 +268,6 @@ module mkPromote (Promote_IFC);
         method Action put(UInt#(32) input_port, ChannelMessage msg);
             input_fifo.enq(msg);
         endmethod
-
-        method ActionValue#(ChannelMessage) get(UInt#(32) output_port);
-            output_fifo.deq;
-            return output_fifo.first;
-        endmethod
     endinterface
 endmodule
 
@@ -296,11 +282,14 @@ interface AccumBigTile_IFC;
     method Action set_cfg(AccumulateBigTileConfig cfg);
 endinterface
 
-module mkAccumBigTile#(ALU_IFC alu) (AccumBigTile_IFC);
+module mkAccumBigTile#(
+    FIFO#(ChannelMessage) partial_output_fifo,
+    FIFO#(ChannelMessage) output_fifo,
+    ALU_IFC alu
+) (AccumBigTile_IFC);
+
     FIFO#(ChannelMessage) input_fifo <- mkFIFO;
     FIFO#(ChannelMessage) partial_input_fifo <- mkFIFO;
-    FIFO#(ChannelMessage) partial_output_fifo <- mkFIFO;
-    FIFO#(ChannelMessage) output_fifo <- mkFIFO;
 
     Reg#(AccumBigTileState) state <- mkReg(AccumBigTile_Fill);
     Reg#(AccumulateBigTileConfig) cfg <- mkReg(AccumulateBigTileConfig{op: ADD, rank: 0});
@@ -368,30 +357,25 @@ module mkAccumBigTile#(ALU_IFC alu) (AccumBigTile_IFC);
                 partial_input_fifo.enq(msg);
             end
         endmethod
-
-        method ActionValue#(ChannelMessage) get(UInt#(32) output_port);
-            if (output_port == 0) begin
-                partial_output_fifo.deq;
-                return partial_output_fifo.first;
-            end else begin
-                output_fifo.deq;
-                return output_fifo.first;
-            end
-        endmethod
     endinterface
 endmodule
 
-module mkTileReader#(Integer num_entries, String filename, Bit#(8) port_id, RamulatorArbiterIO arbiter) (Operation_IFC);
+module mkTileReader#(
+    FIFO#(ChannelMessage) output_fifo,
+    Integer num_entries, 
+    String filename, 
+    Bit#(8) port_id,
+    RamulatorArbiterIO arbiter) (Operation_IFC);
     FileReader_IFC#(TaggedTile) reader <- mkFileReader(num_entries, filename, port_id, arbiter);
     
+    rule enq_to_output;
+        TaggedTile tile <- reader.readNext;
+        output_fifo.enq(tagged Tag_Data tuple2(tagged Tag_Tile tile.t, tile.st));
+    endrule
+
     method Action put(UInt#(32) input_port, ChannelMessage msg);
         $error("TileReader does not support put");
     endmethod
-
-    method ActionValue#(ChannelMessage) get(UInt#(32) output_port);
-        TaggedTile tile <- reader.readNext;
-        return tagged Tag_Data tuple2(tagged Tag_Tile tile.t, tile.st);
-    endmethod 
 endmodule
 
 // Stub modules for missing operations
@@ -401,17 +385,18 @@ interface Broadcast_IFC;
     method Action set_cfg(BroadcastConfig cfg);
 endinterface
 
-module mkBroadcast (Broadcast_IFC);
+module mkBroadcast #(
+    FIFO#(ChannelMessage) output_fifo1,
+    FIFO#(ChannelMessage) output_fifo2)
+    (Broadcast_IFC);
     FIFO#(ChannelMessage) input_fifo <- mkFIFO;
-    FIFO#(ChannelMessage) output_fifo1 <- mkFIFO;
-    FIFO#(ChannelMessage) output_fifo2 <- mkFIFO;
     Reg#(BroadcastConfig) cfg <- mkReg(BroadcastConfig{});
 
     rule do_broadcast;
         let cur = input_fifo.first;
         input_fifo.deq;
         
-        if (cur matches tagged Tag_EndToken .end_token) begin
+        if (cur matches tagged Tag_EndToken) begin
             output_fifo1.enq(cur);
             output_fifo2.enq(cur);
         end else begin
@@ -428,16 +413,6 @@ module mkBroadcast (Broadcast_IFC);
         method Action put(UInt#(32) input_port, ChannelMessage msg);
             input_fifo.enq(msg);
         endmethod
-
-        method ActionValue#(ChannelMessage) get(UInt#(32) output_port);
-            if (output_port == 0) begin
-                output_fifo1.deq;
-                return output_fifo1.first;
-            end else begin
-                output_fifo2.deq;
-                return output_fifo2.first;
-            end
-        endmethod
     endinterface
 endmodule
 
@@ -446,10 +421,11 @@ interface Concat_IFC;
     method Action set_cfg(ConcatConfig cfg);
 endinterface
 
-module mkConcat (Concat_IFC);
+module mkConcat #(
+    FIFO#(ChannelMessage) output_fifo)
+    (Concat_IFC);
     FIFO#(ChannelMessage) input_fifo1 <- mkFIFO;
     FIFO#(ChannelMessage) input_fifo2 <- mkFIFO;
-    FIFO#(ChannelMessage) output_fifo <- mkFIFO;
     Reg#(ConcatConfig) cfg <- mkReg(ConcatConfig{rank: 0});
     Reg#(Bool) reading_left <- mkReg(True);
 
@@ -465,16 +441,16 @@ module mkConcat (Concat_IFC);
             end
             
             output_fifo.enq(tagged Tag_Data tuple2(data, st));
-        end else if (cur_input matches tagged Tag_EndToken .end_token) begin
+        end else if (cur_input matches tagged Tag_EndToken) begin
             output_fifo.enq(cur_input);
             
             // Get the other input's end token
             if (reading_left) begin
-                if (input_fifo2.first matches tagged Tag_EndToken .end_token_2) begin
+                if (input_fifo2.first matches tagged Tag_EndToken) begin
                     input_fifo2.deq;
                 end
             end else begin
-                if (input_fifo1.first matches tagged Tag_EndToken .end_token_1) begin
+                if (input_fifo1.first matches tagged Tag_EndToken) begin
                     input_fifo1.deq;
                 end
             end
@@ -499,11 +475,6 @@ module mkConcat (Concat_IFC);
                 input_fifo2.enq(msg);
             end
         endmethod
-
-        method ActionValue#(ChannelMessage) get(UInt#(32) output_port);
-            output_fifo.deq;
-            return output_fifo.first;
-        endmethod
     endinterface
 endmodule
 
@@ -512,10 +483,12 @@ interface Enumerate_IFC;
     method Action set_cfg(EnumerateConfig cfg);
 endinterface
 
-module mkEnumerate (Enumerate_IFC);
+module mkEnumerate #(
+    FIFO#(ChannelMessage) output_fifo1,
+    FIFO#(ChannelMessage) output_fifo2)
+    (Enumerate_IFC);
+
     FIFO#(ChannelMessage) input_fifo <- mkFIFO;
-    FIFO#(ChannelMessage) output_fifo1 <- mkFIFO;
-    FIFO#(ChannelMessage) output_fifo2 <- mkFIFO;
     Reg#(EnumerateConfig) cfg <- mkReg(EnumerateConfig{rank: 0});
     Reg#(Int#(32)) counter <- mkReg(0);
 
@@ -537,7 +510,7 @@ module mkEnumerate (Enumerate_IFC);
             end else begin
                 counter <= counter + 1;
             end
-        end else if (cur matches tagged Tag_EndToken .end_token) begin
+        end else if (cur matches tagged Tag_EndToken) begin
             output_fifo1.enq(cur);
             output_fifo2.enq(cur);
         end
@@ -551,16 +524,6 @@ module mkEnumerate (Enumerate_IFC);
         method Action put(UInt#(32) input_port, ChannelMessage msg);
             input_fifo.enq(msg);
         endmethod
-
-        method ActionValue#(ChannelMessage) get(UInt#(32) output_port);
-            if (output_port == 0) begin
-                output_fifo1.deq;
-                return output_fifo1.first;
-            end else begin
-                output_fifo2.deq;
-                return output_fifo2.first;
-            end
-        endmethod
     endinterface
 endmodule
 
@@ -569,9 +532,10 @@ interface Flatten_IFC;
     method Action set_cfg(FlattenConfig cfg);
 endinterface
 
-module mkFlatten (Flatten_IFC);
+module mkFlatten #(
+    FIFO#(ChannelMessage) output_fifo)
+    (Flatten_IFC);
     FIFO#(ChannelMessage) input_fifo <- mkFIFO;
-    FIFO#(ChannelMessage) output_fifo <- mkFIFO;
     Reg#(FlattenConfig) cfg <- mkReg(FlattenConfig{rank: 0});
 
     rule do_flatten;
@@ -592,7 +556,7 @@ module mkFlatten (Flatten_IFC);
             end
             
             output_fifo.enq(tagged Tag_Data tuple2(data, out_st));
-        end else if (cur matches tagged Tag_EndToken .end_token) begin
+        end else if (cur matches tagged Tag_EndToken) begin
             output_fifo.enq(cur);
         end
     endrule
@@ -605,11 +569,6 @@ module mkFlatten (Flatten_IFC);
         method Action put(UInt#(32) input_port, ChannelMessage msg);
             input_fifo.enq(msg);
         endmethod
-
-        method ActionValue#(ChannelMessage) get(UInt#(32) output_port);
-            output_fifo.deq;
-            return output_fifo.first;
-        endmethod
     endinterface
 endmodule
 
@@ -618,9 +577,10 @@ interface FlatMap_IFC;
     method Action set_cfg(FlatMapConfig cfg);
 endinterface
 
-module mkFlatMap (FlatMap_IFC);
+module mkFlatMap #(
+    FIFO#(ChannelMessage) output_fifo)
+    (FlatMap_IFC);
     FIFO#(ChannelMessage) input_fifo <- mkFIFO;
-    FIFO#(ChannelMessage) output_fifo <- mkFIFO;
     Reg#(FlatMapConfig) cfg <- mkReg(FlatMapConfig{rank: 0});
 
     rule do_flatmap;
@@ -638,7 +598,7 @@ module mkFlatMap (FlatMap_IFC);
             end else begin
                 output_fifo.enq(tagged Tag_Data tuple2(data, st));
             end
-        end else if (cur matches tagged Tag_EndToken .end_token) begin
+        end else if (cur matches tagged Tag_EndToken) begin
             output_fifo.enq(cur);
         end
     endrule
@@ -651,11 +611,6 @@ module mkFlatMap (FlatMap_IFC);
         method Action put(UInt#(32) input_port, ChannelMessage msg);
             input_fifo.enq(msg);
         endmethod
-
-        method ActionValue#(ChannelMessage) get(UInt#(32) output_port);
-            output_fifo.deq;
-            return output_fifo.first;
-        endmethod
     endinterface
 endmodule
 
@@ -664,9 +619,10 @@ interface RepeatN_IFC;
     method Action set_cfg(RepeatNConfig cfg);
 endinterface
 
-module mkRepeatN (RepeatN_IFC);
+module mkRepeatN #(
+    FIFO#(ChannelMessage) output_fifo)
+    (RepeatN_IFC);
     FIFO#(ChannelMessage) input_fifo <- mkFIFO;
-    FIFO#(ChannelMessage) output_fifo <- mkFIFO;
     Reg#(RepeatNConfig) cfg <- mkReg(RepeatNConfig{count: 0});
     
     Reg#(Maybe#(ChannelMessage)) current_data <- mkReg(tagged Invalid);
@@ -678,7 +634,7 @@ module mkRepeatN (RepeatN_IFC);
             let cur = input_fifo.first;
             input_fifo.deq;
             
-            if (cur matches tagged Tag_EndToken .end_token) begin
+            if (cur matches tagged Tag_EndToken) begin
                 output_fifo.enq(cur);
             end else begin
                 // Output the first repetition immediately
@@ -722,11 +678,6 @@ module mkRepeatN (RepeatN_IFC);
         method Action put(UInt#(32) input_port, ChannelMessage msg);
             input_fifo.enq(msg);
         endmethod
-
-        method ActionValue#(ChannelMessage) get(UInt#(32) output_port);
-            output_fifo.deq;
-            return output_fifo.first;
-        endmethod
     endinterface
 endmodule
 
@@ -735,10 +686,11 @@ interface RepeatRef_IFC;
     method Action set_cfg(RepeatRefConfig cfg);
 endinterface
 
-module mkRepeatRef (RepeatRef_IFC);
+module mkRepeatRef #(
+    FIFO#(ChannelMessage) output_fifo)
+    (RepeatRef_IFC);
     FIFO#(ChannelMessage) input_fifo <- mkFIFO;
     FIFO#(ChannelMessage) ref_fifo <- mkFIFO;
-    FIFO#(ChannelMessage) output_fifo <- mkFIFO;
     Reg#(RepeatRefConfig) cfg <- mkReg(RepeatRefConfig{rank: 0});
 
     rule do_repeat_ref;
@@ -766,13 +718,13 @@ module mkRepeatRef (RepeatRef_IFC);
                 end else begin
                     ref_fifo.deq;
                 end
-            end else if (cur_in matches tagged Tag_EndToken .end_token) begin
+            end else if (cur_in matches tagged Tag_EndToken) begin
                 output_fifo.enq(cur_in);
                 input_fifo.deq;
                 ref_fifo.deq;
             end
-        end else if (cur_ref matches tagged Tag_EndToken .end_token) begin
-            if (cur_in matches tagged Tag_EndToken .end_token_2) begin
+        end else if (cur_ref matches tagged Tag_EndToken) begin
+            if (cur_in matches tagged Tag_EndToken) begin
                 output_fifo.enq(cur_ref);
                 input_fifo.deq;
                 ref_fifo.deq;
@@ -792,11 +744,6 @@ module mkRepeatRef (RepeatRef_IFC);
                 ref_fifo.enq(msg);
             end
         endmethod
-
-        method ActionValue#(ChannelMessage) get(UInt#(32) output_port);
-            output_fifo.deq;
-            return output_fifo.first;
-        endmethod
     endinterface
 endmodule
 
@@ -805,9 +752,10 @@ interface Reshape_IFC;
     method Action set_cfg(ReshapeConfig cfg);
 endinterface
 
-module mkReshape (Reshape_IFC);
+module mkReshape #(
+    FIFO#(ChannelMessage) output_fifo)
+    (Reshape_IFC);
     FIFO#(ChannelMessage) input_fifo <- mkFIFO;
-    FIFO#(ChannelMessage) output_fifo <- mkFIFO;
     Reg#(ReshapeConfig) cfg <- mkReg(ReshapeConfig{});
 
     rule do_reshape;
@@ -827,11 +775,6 @@ module mkReshape (Reshape_IFC);
         method Action put(UInt#(32) input_port, ChannelMessage msg);
             input_fifo.enq(msg);
         endmethod
-
-        method ActionValue#(ChannelMessage) get(UInt#(32) output_port);
-            output_fifo.deq;
-            return output_fifo.first;
-        endmethod
     endinterface
 endmodule
 
@@ -840,9 +783,10 @@ interface Reassemble_IFC;
     method Action set_cfg(ReassembleConfig cfg);
 endinterface
 
-module mkReassemble (Reassemble_IFC);
+module mkReassemble #(
+    FIFO#(ChannelMessage) output_fifo)
+    (Reassemble_IFC);
     FIFO#(ChannelMessage) input_fifo <- mkFIFO;
-    FIFO#(ChannelMessage) output_fifo <- mkFIFO;
     Reg#(ReassembleConfig) cfg <- mkReg(ReassembleConfig{rank: 0});
 
     rule do_reassemble;
@@ -862,11 +806,6 @@ module mkReassemble (Reassemble_IFC);
         method Action put(UInt#(32) input_port, ChannelMessage msg);
             input_fifo.enq(msg);
         endmethod
-
-        method ActionValue#(ChannelMessage) get(UInt#(32) output_port);
-            output_fifo.deq;
-            return output_fifo.first;
-        endmethod
     endinterface
 endmodule
 
@@ -875,10 +814,11 @@ interface Rotate_IFC;
     method Action set_cfg(RotateConfig cfg);
 endinterface
 
-module mkRotate (Rotate_IFC);
+module mkRotate #(
+    FIFO#(ChannelMessage) output_fifo1,
+    FIFO#(ChannelMessage) output_fifo2)
+    (Rotate_IFC);
     FIFO#(ChannelMessage) input_fifo <- mkFIFO;
-    FIFO#(ChannelMessage) output_fifo1 <- mkFIFO;
-    FIFO#(ChannelMessage) output_fifo2 <- mkFIFO;
     Reg#(RotateConfig) cfg <- mkReg(RotateConfig{reset_rank: 0});
     Reg#(Int#(32)) current_output <- mkReg(0);
 
@@ -902,7 +842,7 @@ module mkRotate (Rotate_IFC);
             end else begin
                 current_output <= 0;
             end
-        end else if (cur matches tagged Tag_EndToken .end_token) begin
+        end else if (cur matches tagged Tag_EndToken) begin
             output_fifo1.enq(cur);
             output_fifo2.enq(cur);
         end
@@ -916,16 +856,6 @@ module mkRotate (Rotate_IFC);
         method Action put(UInt#(32) input_port, ChannelMessage msg);
             input_fifo.enq(msg);
         endmethod
-
-        method ActionValue#(ChannelMessage) get(UInt#(32) output_port);
-            if (output_port == 0) begin
-                output_fifo1.deq;
-                return output_fifo1.first;
-            end else begin
-                output_fifo2.deq;
-                return output_fifo2.first;
-            end
-        endmethod
     endinterface
 endmodule
 
@@ -934,10 +864,11 @@ interface Parallelize_IFC;
     method Action set_cfg(ParallelizeConfig cfg);
 endinterface
 
-module mkParallelize (Parallelize_IFC);
+module mkParallelize #(
+    FIFO#(ChannelMessage) output_fifo1,
+    FIFO#(ChannelMessage) output_fifo2)
+    (Parallelize_IFC);
     FIFO#(ChannelMessage) input_fifo <- mkFIFO;
-    FIFO#(ChannelMessage) output_fifo1 <- mkFIFO;
-    FIFO#(ChannelMessage) output_fifo2 <- mkFIFO;
     Reg#(ParallelizeConfig) cfg <- mkReg(ParallelizeConfig{rank: 0});
     Reg#(Int#(32)) current_output <- mkReg(0);
 
@@ -963,7 +894,7 @@ module mkParallelize (Parallelize_IFC);
             end else begin
                 current_output <= 0;
             end
-        end else if (cur matches tagged Tag_EndToken .end_token) begin
+        end else if (cur matches tagged Tag_EndToken) begin
             output_fifo1.enq(cur);
             output_fifo2.enq(cur);
         end
@@ -977,16 +908,6 @@ module mkParallelize (Parallelize_IFC);
         method Action put(UInt#(32) input_port, ChannelMessage msg);
             input_fifo.enq(msg);
         endmethod
-
-        method ActionValue#(ChannelMessage) get(UInt#(32) output_port);
-            if (output_port == 0) begin
-                output_fifo1.deq;
-                return output_fifo1.first;
-            end else begin
-                output_fifo2.deq;
-                return output_fifo2.first;
-            end
-        endmethod
     endinterface
 endmodule
 
@@ -995,11 +916,12 @@ interface Partition_IFC;
     method Action set_cfg(PartitionConfig cfg);
 endinterface
 
-module mkPartition (Partition_IFC);
+module mkPartition #(
+    FIFO#(ChannelMessage) output_fifo1,
+    FIFO#(ChannelMessage) output_fifo2)
+    (Partition_IFC);
     FIFO#(ChannelMessage) input_fifo <- mkFIFO;
     FIFO#(ChannelMessage) select_fifo <- mkFIFO;
-    FIFO#(ChannelMessage) output_fifo1 <- mkFIFO;
-    FIFO#(ChannelMessage) output_fifo2 <- mkFIFO;
     Reg#(PartitionConfig) cfg <- mkReg(PartitionConfig{rank: 0});
 
     rule do_partition;
@@ -1023,8 +945,8 @@ module mkPartition (Partition_IFC);
                     end
                 end
             end
-        end else if (cur_select matches tagged Tag_EndToken .end_token) begin
-            if (cur_input matches tagged Tag_EndToken .end_token_2) begin
+        end else if (cur_select matches tagged Tag_EndToken) begin
+            if (cur_input matches tagged Tag_EndToken) begin
                 output_fifo1.enq(cur_input);
                 output_fifo2.enq(cur_input);
             end
@@ -1046,16 +968,6 @@ module mkPartition (Partition_IFC);
                 select_fifo.enq(msg);
             end
         endmethod
-
-        method ActionValue#(ChannelMessage) get(UInt#(32) output_port);
-            if (output_port == 0) begin
-                output_fifo1.deq;
-                return output_fifo1.first;
-            end else begin
-                output_fifo2.deq;
-                return output_fifo2.first;
-            end
-        endmethod
     endinterface
 endmodule
 
@@ -1064,9 +976,10 @@ interface Scan_IFC;
     method Action set_cfg(ScanConfig cfg);
 endinterface
 
-module mkScan (Scan_IFC);
+module mkScan #(
+    FIFO#(ChannelMessage) output_fifo)
+    (Scan_IFC);
     FIFO#(ChannelMessage) input_fifo <- mkFIFO;
-    FIFO#(ChannelMessage) output_fifo <- mkFIFO;
     Reg#(ScanConfig) cfg <- mkReg(ScanConfig{op: ADD, init: tagged Invalid, rank: 0});
 
     // TODO: Implement scan logic
@@ -1084,11 +997,6 @@ module mkScan (Scan_IFC);
         method Action put(UInt#(32) input_port, ChannelMessage msg);
             input_fifo.enq(msg);
         endmethod
-
-        method ActionValue#(ChannelMessage) get(UInt#(32) output_port);
-            output_fifo.deq;
-            return output_fifo.first;
-        endmethod
     endinterface
 endmodule
 
@@ -1097,13 +1005,14 @@ interface SpatialMatmulT_IFC;
     method Action set_cfg(SpatialMatmulTConfig cfg);
 endinterface
 
-module mkSpatialMatmulT (SpatialMatmulT_IFC);
+module mkSpatialMatmulT #(
+    FIFO#(ChannelMessage) output_fifo,
+    FIFO#(ChannelMessage) weight_out_fifo,
+    FIFO#(ChannelMessage) input_out_fifo)
+    (SpatialMatmulT_IFC);
     FIFO#(ChannelMessage) input_fifo <- mkFIFO;
     FIFO#(ChannelMessage) weight_fifo <- mkFIFO;
     FIFO#(ChannelMessage) psum_fifo <- mkFIFO;
-    FIFO#(ChannelMessage) output_fifo <- mkFIFO;
-    FIFO#(ChannelMessage) weight_out_fifo <- mkFIFO;
-    FIFO#(ChannelMessage) input_out_fifo <- mkFIFO;
     Reg#(SpatialMatmulTConfig) cfg <- mkReg(SpatialMatmulTConfig{row_position: 0, num_rows: 0, bottom_right: False});
 
     rule do_spatial_matmul_t;
@@ -1126,19 +1035,6 @@ module mkSpatialMatmulT (SpatialMatmulT_IFC);
                 weight_fifo.enq(msg);
             end else begin
                 psum_fifo.enq(msg);
-            end
-        endmethod
-
-        method ActionValue#(ChannelMessage) get(UInt#(32) output_port);
-            if (output_port == 0) begin
-                output_fifo.deq;
-                return output_fifo.first;
-            end else if (output_port == 1) begin
-                weight_out_fifo.deq;
-                return weight_out_fifo.first;
-            end else begin
-                input_out_fifo.deq;
-                return input_out_fifo.first;
             end
         endmethod
     endinterface
@@ -1167,83 +1063,7 @@ module mkPrinter#(String name) (Operation_IFC);
     method Action put(UInt#(32) input_port, ChannelMessage msg);
         input_fifo.enq(msg);
     endmethod
-
-    method ActionValue#(ChannelMessage) get(UInt#(32) output_port);
-        $error("Printer does not support get");
-        return ?;
-    endmethod
 endmodule
 
-module mkTop(Empty);
-    let m1 <- mkBinaryMap(1, matmul_t_tile);
-    let m2 <- mkBinaryMap(2, matmul_t_tile);
-
-    let a1 <- mkAccum(add_tile, 1);
-    let a2 <- mkAccum(add_tile, 1);
-
-    let m3 <- mkBinaryMap(3, mul_tile);
-    let m4 <- mkUnaryMap(silu_tile);
-
-    let p5 <- mkPromote(0);
-
-    let m6 <- mkBinaryMap(4, matmul_t_tile);
-    let a7 <- mkAccum(add_tile, 1);
-
-    rule stimulus;
-        let tile = 5;
-        let msg = tagged Tag_Data tuple2(tagged Tag_Tile tile, 5);
-        m1.put(0, msg);
-        m1.put(1, msg);
-        m2.put(0, msg);
-        m2.put(1, msg);
-        m6.put(1, msg);
-    endrule
-
-    rule pass_m1;
-        let msg <- m1.get(0);
-        a1.put(0, msg);
-    endrule
-
-    rule pass_m2;
-        let msg <- m2.get(0);
-        a2.put(0, msg);
-    endrule
-
-    rule pass_a1;
-        let msg <- a1.get(0);
-        m3.put(0, msg);
-    endrule
-
-    rule pass_a2;
-        let msg <- a2.get(0);
-        m4.put(0, msg);
-    endrule
-
-    rule pass_m4;
-        let msg <- m4.get(0);
-        m3.put(1, msg);
-    endrule
-
-    rule pass_m3;
-        let msg <- m3.get(0);
-        p5.put(0, msg);
-    endrule
-
-    rule pass_p5;
-        let msg <- p5.get(0);
-        m6.put(0, msg);
-    endrule
-
-    rule pass_m6;
-        let msg <- m6.get(0);
-        a7.put(0, msg);
-    endrule
-
-    rule drain;
-        let msg <- a7.get(0);
-        $display("Message: %s", fshow(msg));
-        $finish;
-    endrule
-endmodule
 
 endpackage
