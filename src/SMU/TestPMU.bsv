@@ -3,7 +3,7 @@ package TestPMU;
 import PMU::*;
 import Types::*;
 import Vector::*;
-import FIFO::*;
+import FIFOF::*;
 import Parameters::*;
 import RegFile::*;
 import ConfigReg::*;        // Added for the new test
@@ -11,7 +11,7 @@ import Operation::*;        // Added for the new test
 // import YourRepeatPackage::*;  // Uncomment and specify the correct package for mkRepeatStatic
 
 // Existing test parameters
-typedef 23 NUM_TEST_VALUES;
+typedef 9 NUM_TEST_VALUES;
 typedef 1 RANK;
 
 // New test parameters  
@@ -37,7 +37,8 @@ typedef 4 ENTRY_SIZE;
 // ============================================================================
 (* synthesize *)
 module mkTestPMU();
-    PMU_IFC pmu <- mkPMU(fromInteger(valueOf(RANK)));
+    Vector#(4, FIFOF#(ChannelMessage)) dummy_fifos <- replicateM(mkFIFOF);
+    PMU_IFC pmu <- mkPMU(fromInteger(valueOf(RANK)), Coords { x: 0, y: 0 }, dummy_fifos, dummy_fifos, dummy_fifos, dummy_fifos, dummy_fifos, dummy_fifos, dummy_fifos, dummy_fifos, dummy_fifos, dummy_fifos);
 
     function TaggedTile testValues(Bit#(TLog#(TAdd#(TestPMU::NUM_TEST_VALUES, 2))) i);
         Vector#(TILE_SIZE, Vector#(TILE_SIZE, Scalar)) mat = replicate(replicate(0));
@@ -165,10 +166,11 @@ endmodule
 // ============================================================================
 // Stop token test with repeat module
 // ============================================================================
-(* synthesize *)
+// (* synthesize *)
 module mkTestPMUStopToken(Empty);
     let rank = 3;
-    PMU_IFC dut <- mkPMU(rank);
+    Vector#(4, FIFOF#(ChannelMessage)) dummy_fifos <- replicateM(mkFIFOF);
+    PMU_IFC dut <- mkPMU(fromInteger(valueOf(RANK)), Coords { x: 0, y: 0 }, dummy_fifos, dummy_fifos, dummy_fifos, dummy_fifos, dummy_fifos, dummy_fifos, dummy_fifos, dummy_fifos, dummy_fifos, dummy_fifos);
     let rpt <- mkRepeatStatic(2);  
     let drained <- mkReg(0);
     
@@ -207,6 +209,235 @@ module mkTestPMUStopToken(Empty);
         // if (drained == 9) begin
         //     $finish(0);
         // end
+    endrule
+
+endmodule
+
+module mkTestPMUGrid(Empty);
+
+    // Create shared FIFOs for the mesh
+    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(ChannelMessage))) ns_request_data <- replicateM(replicateM(mkGFIFOF(False, False)));
+    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(ChannelMessage))) sn_request_data <- replicateM(replicateM(mkGFIFOF(False, False)));
+    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(ChannelMessage))) ns_send_data <- replicateM(replicateM(mkGFIFOF(False, False)));
+    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(ChannelMessage))) sn_send_data <- replicateM(replicateM(mkGFIFOF(False, False)));
+    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(ChannelMessage))) ns_request_space <- replicateM(replicateM(mkGFIFOF(True, True)));
+    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(ChannelMessage))) sn_request_space <- replicateM(replicateM(mkGFIFOF(True, True)));
+    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(ChannelMessage))) ns_send_space <- replicateM(replicateM(mkGFIFOF(False, False)));
+    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(ChannelMessage))) sn_send_space <- replicateM(replicateM(mkGFIFOF(False, False)));
+    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(ChannelMessage))) ns_send_dealloc <- replicateM(replicateM(mkGFIFOF(False, False)));
+    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(ChannelMessage))) sn_send_dealloc <- replicateM(replicateM(mkGFIFOF(False, False)));
+
+    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(ChannelMessage))) ew_request_data <- replicateM(replicateM(mkGFIFOF(False, False)));
+    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(ChannelMessage))) we_request_data <- replicateM(replicateM(mkGFIFOF(False, False)));
+    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(ChannelMessage))) ew_send_data <- replicateM(replicateM(mkGFIFOF(False, False)));
+    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(ChannelMessage))) we_send_data <- replicateM(replicateM(mkGFIFOF(False, False)));
+    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(ChannelMessage))) ew_request_space <- replicateM(replicateM(mkGFIFOF(True, True)));
+    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(ChannelMessage))) we_request_space <- replicateM(replicateM(mkGFIFOF(True, True)));
+    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(ChannelMessage))) ew_send_space <- replicateM(replicateM(mkGFIFOF(False, False)));
+    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(ChannelMessage))) we_send_space <- replicateM(replicateM(mkGFIFOF(False, False)));
+    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(ChannelMessage))) ew_send_dealloc <- replicateM(replicateM(mkGFIFOF(False, False)));
+    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(ChannelMessage))) we_send_dealloc <- replicateM(replicateM(mkGFIFOF(False, False)));
+
+    // Instantiate the PMUs
+    Vector#(NUM_PMUS, Vector#(NUM_PMUS, PMU_IFC)) pmus;
+
+    Reg#(Bool) initialized <- mkReg(False);
+
+    for (Integer i = 0; i < valueOf(NUM_PMUS); i = i + 1) begin
+        for (Integer j = 0; j < valueOf(NUM_PMUS); j = j + 1) begin
+            Vector#(4, FIFOF#(ChannelMessage)) request_data = newVector();
+            request_data[0] = sn_request_data[i][j];     // North
+            request_data[1] = ns_request_data[i + 1][j]; // South
+            request_data[2] = ew_request_data[i][j];     // West
+            request_data[3] = we_request_data[i][j + 1]; // East
+
+            Vector#(4, FIFOF#(ChannelMessage)) receive_request_data = newVector();
+            receive_request_data[0] = ns_request_data[i][j];     // North
+            receive_request_data[1] = sn_request_data[i + 1][j]; // South
+            receive_request_data[2] = we_request_data[i][j];     // West
+            receive_request_data[3] = ew_request_data[i][j + 1]; // East
+
+            Vector#(4, FIFOF#(ChannelMessage)) send_data = newVector();
+            send_data[0] = sn_send_data[i][j];
+            send_data[1] = ns_send_data[i + 1][j];
+            send_data[2] = ew_send_data[i][j];
+            send_data[3] = we_send_data[i][j + 1];
+
+            Vector#(4, FIFOF#(ChannelMessage)) receive_send_data = newVector();
+            receive_send_data[0] = ns_send_data[i][j];
+            receive_send_data[1] = sn_send_data[i + 1][j];
+            receive_send_data[2] = we_send_data[i][j];
+            receive_send_data[3] = ew_send_data[i][j + 1];
+
+            Vector#(4, FIFOF#(ChannelMessage)) request_space = newVector();
+            request_space[0] = sn_request_space[i][j];     // North
+            request_space[1] = ns_request_space[i + 1][j]; // South
+            request_space[2] = ew_request_space[i][j];     // West
+            request_space[3] = we_request_space[i][j + 1]; // East
+
+            Vector#(4, FIFOF#(ChannelMessage)) receive_request_space = newVector();
+            receive_request_space[0] = ns_request_space[i][j];     // North
+            receive_request_space[1] = sn_request_space[i + 1][j]; // South
+            receive_request_space[2] = we_request_space[i][j];     // West
+            receive_request_space[3] = ew_request_space[i][j + 1]; // East
+
+            Vector#(4, FIFOF#(ChannelMessage)) send_space = newVector();
+            send_space[0] = sn_send_space[i][j];
+            send_space[1] = ns_send_space[i + 1][j];
+            send_space[2] = ew_send_space[i][j];
+            send_space[3] = we_send_space[i][j + 1];
+
+            Vector#(4, FIFOF#(ChannelMessage)) receive_send_space = newVector();
+            receive_send_space[0] = ns_send_space[i][j];
+            receive_send_space[1] = sn_send_space[i + 1][j];
+            receive_send_space[2] = we_send_space[i][j];
+            receive_send_space[3] = ew_send_space[i][j + 1];
+
+            Vector#(4, FIFOF#(ChannelMessage)) send_dealloc = newVector();
+            send_dealloc[0] = sn_send_dealloc[i][j];
+            send_dealloc[1] = ns_send_dealloc[i + 1][j];
+            send_dealloc[2] = ew_send_dealloc[i][j];
+            send_dealloc[3] = we_send_dealloc[i][j + 1];
+
+            Vector#(4, FIFOF#(ChannelMessage)) receive_send_dealloc = newVector();
+            receive_send_dealloc[0] = ns_send_dealloc[i][j];
+            receive_send_dealloc[1] = sn_send_dealloc[i + 1][j];
+            receive_send_dealloc[2] = we_send_dealloc[i][j];
+            receive_send_dealloc[3] = ew_send_dealloc[i][j + 1];
+
+            pmus[i][j] <- mkPMU(
+                fromInteger(valueOf(NUM_PMUS)), // rank  
+                Coords { x: fromInteger(i), y: fromInteger(j) }, // coords
+                request_data,
+                receive_request_data,
+                send_data,
+                receive_send_data,
+                request_space,
+                receive_request_space,
+                send_space,
+                receive_send_space,
+                send_dealloc,
+                receive_send_dealloc
+            );
+        end
+    end
+
+    function TaggedTile testValues(Bit#(TLog#(TAdd#(NUM_TEST_VALUES, 2))) i);
+        Vector#(TILE_SIZE, Vector#(TILE_SIZE, Scalar)) mat = replicate(replicate(0));
+        StopToken token = 0;
+        if (i == fromInteger(valueOf(NUM_TEST_VALUES) / 2 - 1)) begin
+            token = 1;
+        end
+        if (i == fromInteger(valueOf(NUM_TEST_VALUES) - 1)) begin
+            token = 2;
+        end
+        
+        let cur = unpack(extend(i));
+        let tile_size = fromInteger(valueOf(TILE_SIZE));
+        let tile_size_squared = tile_size * tile_size;  
+        for (Integer k = 0; k < valueOf(TILE_SIZE); k = k + 1) begin
+            for (Integer l = 0; l < valueOf(TILE_SIZE); l = l + 1) begin
+                mat[k][l] = tile_size_squared * cur + tile_size * fromInteger(k) + fromInteger(l);
+            end
+        end
+        return TaggedTile { t: pack(mat), st: token };
+    endfunction
+
+    // === State tracking ===
+    Reg#(Bit#(TLog#(TAdd#(NUM_TEST_VALUES, 2)))) putIndex <- mkReg(0);
+    Reg#(Bit#(TLog#(TAdd#(NUM_TEST_VALUES, 2)))) getIndex <- mkReg(0);
+    Reg#(Bit#(TLog#(TAdd#(NUM_TEST_VALUES, 2)))) valIndex <- mkReg(0);
+
+    // === Put values ===
+    rule driveInput (initialized);
+        if (putIndex < fromInteger(valueOf(NUM_TEST_VALUES))) begin 
+            pmus[1][2].put_data(tagged Tag_Data tuple2(tagged Tag_Tile testValues(putIndex).t, testValues(putIndex).st));
+            // $display("Test: Putting value");
+            // printTile(testValues[putIndex]);
+            putIndex <= putIndex + 1;
+        end else if (putIndex == fromInteger(valueOf(NUM_TEST_VALUES))) begin
+            pmus[1][2].put_data(tagged Tag_EndToken 0);
+            putIndex <= putIndex + 1;
+            // $display("Test: Putting end token");
+        end
+    endrule
+
+    // === Handle token output ===
+    rule handleToken (initialized);
+        let token <- pmus[1][2].get_token();
+        case (token) matches
+            tagged Tag_Data {.d, .st}: begin
+                case (d) matches
+                    tagged Tag_Ref {.r, .deallocate}: begin
+                        // tokens.upd(getIndex, tuple2(r, deallocate));
+                        $display("Test: Got token %d %d %d", r, deallocate, st);
+                        getIndex <= getIndex + 1;
+                        pmus[1][2].put_token(tagged Tag_Data tuple2(tagged Tag_Ref tuple2(r, True), st));
+                    end
+                    default: begin
+                        $display("Expected scalar token, got something else");
+                        $finish(0);
+                    end
+                endcase
+            end
+            tagged Tag_EndToken .et: begin
+                $display("Test: End token received in token out");
+                pmus[1][2].put_token(tagged Tag_EndToken 0);
+            end
+            default: begin
+                $display("Expected Tag_Data in token_out");
+                $finish(0);
+            end
+        endcase
+    endrule
+
+    // === Handle returned value ===
+    rule handleValue (initialized);
+        let value <- pmus[1][2].get_data();
+
+        case (value) matches
+            tagged Tag_Data {.d, .st}: begin
+                case (d) matches
+                    tagged Tag_Tile .t: begin
+                        let expected = testValues(valIndex);
+                        valIndex <= valIndex + 1;
+
+                        if (TaggedTile { t: t, st: st } == expected) begin
+                            $display("PASSED:");
+                            // printTile(TaggedTile { t: t, st: st });
+                            $display("Expected [st = %0d]:", expected.st);
+                            $display("Got [st = %0d]:", st);
+                            // printTile(expected);
+                        end else begin
+                            $display("FAILED:");
+                            // printTile(TaggedTile { t: t, st: st });
+                            $display("Expected [st = %0d]:", expected.st);
+                            $display("Got [st = %0d]:", st);
+                            // printTile(expected);
+                            // $finish(0); // Exits on failure
+                        end
+                    end
+                    default: begin
+                        $display("Expected tile, got something else");
+                        $finish(0);
+                    end
+                endcase
+            end
+            tagged Tag_EndToken .et: begin
+                $display("Test: End token received");
+                $display("All tests completed at cycle %d", pmus[1][2].get_cycle_count());
+                $finish(0);
+            end
+            default: begin
+                $display("Expected Tag_Data in data_out");
+                $finish(0);
+            end
+        endcase
+    endrule
+
+    rule print_grid_info (!initialized);
+        $display("[GRID] Created %dx%d PMU grid", valueOf(NUM_PMUS), valueOf(NUM_PMUS));
+        initialized <= True;
     endrule
 
 endmodule

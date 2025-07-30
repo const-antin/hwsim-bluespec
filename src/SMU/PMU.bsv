@@ -5,10 +5,12 @@
 // TODO: Remove memory size dependency on tile size, should just have banks be as large as possible
 // TODO: Swap registers for SRAM
 // TODO: rank shouldnt be a parameter, should be stored in a reg and parsed from a config input
+// TODO: Technically having the entry ports to be guarded might be a problem, because if I want to enqueue only in one direction, but another blocks, thats wrong.
 
 package PMU;
 
 import FIFO::*;
+import FIFOF::*;
 import Types::*;
 import Vector::*;
 import RegFile::*;
@@ -33,9 +35,19 @@ endinterface
 
 // PMU module that processes between the FIFOs
 module mkPMU#(
-    Int#(32) rank                    // Rank of the current tile
+    Int#(32) rank,                    // Rank of the current tile
+    Coords coords, // x, y
+    Vector#(4, FIFOF#(ChannelMessage)) request_data, // North, South, West, East
+    Vector#(4, FIFOF#(ChannelMessage)) receive_request_data,
+    Vector#(4, FIFOF#(ChannelMessage)) send_data,
+    Vector#(4, FIFOF#(ChannelMessage)) receive_send_data,
+    Vector#(4, FIFOF#(ChannelMessage)) request_space,
+    Vector#(4, FIFOF#(ChannelMessage)) receive_request_space,
+    Vector#(4, FIFOF#(ChannelMessage)) send_space,
+    Vector#(4, FIFOF#(ChannelMessage)) receive_send_space,
+    Vector#(4, FIFOF#(ChannelMessage)) send_dealloc,
+    Vector#(4, FIFOF#(ChannelMessage)) receive_send_dealloc
 )(PMU_IFC);
-
     // ============================================================================
     // Internal state
     // ============================================================================
@@ -63,12 +75,19 @@ module mkPMU#(
     RegFile#(Bit#(TLog#(MAX_ENTRIES)), Maybe#(StorageAddr)) first_entry <- mkRegFileWCF(0, fromInteger(valueOf(MAX_ENTRIES) - 1));    
     RegFile#(Bit#(TLog#(MAX_ENTRIES)), Bool) token_complete <- mkRegFileWCF(0, fromInteger(valueOf(MAX_ENTRIES) - 1));
     Vector#(MAX_ENTRIES, ConfigReg#(Maybe#(StorageAddr))) next_table <- replicateM(mkConfigReg(tagged Invalid));
-    // Vector#(MAX_ENTRIES, ConfigReg#(Bit#(TLog#(MAX_ENTRIES)))) pmu_id_table <- replicateM(mkConfigReg(0)); // TODO: Unused for static
+    // TODO: Pack this pmu id table into the storage addr
+    // I'm gonna need a lot of logic to send around the data that comes from storing the chain on different pmus
+    Vector#(MAX_ENTRIES, ConfigReg#(Maybe#(Coords))) pmu_id_table <- replicateM(mkConfigReg(tagged Invalid)); // TODO: Unused for static
     Reg#(StorageAddr) prev_stored <- mkReg(0);
 
     // load and deallocate registers
     Reg#(Maybe#(LoadState)) load_token <- mkReg(tagged Invalid);
     ConfigReg#(Maybe#(Bit#(TLog#(MAX_ENTRIES)))) deallocate_reg <- mkConfigReg(tagged Invalid);
+
+    // Round robin counter for space requests
+    Reg#(Bit#(3)) space_round_robin_counter <- mkReg(0);
+    Reg#(Bool) space_request_in_flight <- mkReg(False);
+    Reg#(Int#(32)) num_space_requests_in_flight <- mkReg(0);
 
     // ============================================================================
     // Rule Orderings
@@ -76,7 +95,7 @@ module mkPMU#(
 
     (* execution_order = "cycle_counter, store_tile, next_free, continue_load_tile" *)
     (* execution_order = "cycle_counter, start_load_tile" *)
-    (* descending_urgency = "deallocate_token, store_tile" *)
+    (* descending_urgency = "deallocate_token, store_tile, round_robin_space_request" *)
 
     // ============================================================================
     // Main Logic Rules
@@ -88,7 +107,96 @@ module mkPMU#(
         deallocate_reg <= tagged Invalid;
     endrule
 
-    rule next_free (initialized && !isValid(next_free_set));
+    rule round_robin_space_request (initialized);
+        Bool north_has_data = receive_request_space[0].notEmpty && send_space[0].notFull;
+        Bool south_has_data = receive_request_space[1].notEmpty && send_space[1].notFull;
+        Bool west_has_data = receive_request_space[2].notEmpty && send_space[2].notFull;
+        Bool east_has_data = receive_request_space[3].notEmpty && send_space[3].notFull;
+        
+        // Find the next available FIFO in round-robin order
+        Bool found = False;
+        Bit#(3) found_index = 0;
+        Bit#(3) current = space_round_robin_counter;
+        
+        // Try up to 4 times to find an available FIFO
+        for (Bit#(3) i = 0; i < 4; i = i + 1) begin
+            let idx = (current + i) % 4;
+            if (!found) begin
+                case (idx) matches
+                    0: if (north_has_data) begin
+                        receive_request_space[0].deq;
+                        $display("PMU %d, %d: Received space request from north", coords.x, coords.y);
+                        found = True;
+                        found_index = 0;
+                        send_space[0].enq(tagged Tag_EndToken 0);
+                    end
+                    1: if (south_has_data) begin
+                        receive_request_space[1].deq;
+                        $display("PMU %d, %d: Received space request from south", coords.x, coords.y);
+                        found = True;
+                        found_index = 1;
+                        send_space[1].enq(tagged Tag_EndToken 0);
+                    end
+                    2: if (west_has_data) begin
+                        receive_request_space[2].deq;
+                        $display("PMU %d, %d: Received space request from west", coords.x, coords.y);
+                        found = True;
+                        found_index = 2;
+                        send_space[2].enq(tagged Tag_EndToken 0);
+                    end
+                    3: if (east_has_data) begin
+                        receive_request_space[3].deq;
+                        $display("PMU %d, %d: Received space request from east", coords.x, coords.y);
+                        found = True;
+                        found_index = 3;
+                        send_space[3].enq(tagged Tag_EndToken 0);
+                    end
+                endcase
+            end
+        end
+        
+        // Only increment counter if we found and processed data
+        if (found) begin
+            space_round_robin_counter <= (found_index + 1) % 4;
+        end 
+    endrule
+
+    rule receive_send_space (initialized && space_request_in_flight);
+        Bool north_has_data = receive_send_space[0].notEmpty;
+        Bool south_has_data = receive_send_space[1].notEmpty;
+        Bool west_has_data = receive_send_space[2].notEmpty;
+        Bool east_has_data = receive_send_space[3].notEmpty;
+
+        let num_responses_received = 0;
+
+        if (north_has_data) begin
+            receive_send_space[0].deq;
+            $display("Received space at pmu %d, %d from north", coords.x, coords.y);
+            num_responses_received = num_responses_received + 1;
+        end 
+        if (south_has_data) begin
+            receive_send_space[1].deq;
+            $display("Received space at pmu %d, %d from south", coords.x, coords.y);
+            num_responses_received = num_responses_received + 1;
+        end 
+        if (west_has_data) begin
+            receive_send_space[2].deq;
+            $display("Received space at pmu %d, %d from west", coords.x, coords.y);
+            num_responses_received = num_responses_received + 1;
+        end 
+        if (east_has_data) begin
+            receive_send_space[3].deq;
+            $display("Received space at pmu %d, %d from east", coords.x, coords.y);
+            num_responses_received = num_responses_received + 1;
+        end
+
+        if (num_responses_received == num_space_requests_in_flight) begin
+            space_request_in_flight <= False;
+        end
+
+    endrule
+
+    rule next_free (initialized && !isValid(next_free_set) && !space_request_in_flight);
         // $display("Fired next_free");
         let mset <- free_list.allocSet();
         case (mset) matches
@@ -96,14 +204,37 @@ module mkPMU#(
                 next_free_set <= tagged Valid s;
             end
             default: begin
-                // $display("***** Out of memory at cycle %d, load token validity is %d *****", cycle_count, isValid(load_token));
+                $display("***** Out of memory at PMU %d, %d, load token validity is %d *****", coords.x, coords.y, isValid(load_token));
                 next_free_set <= tagged Invalid;
+                let num_requests_sent = 0;
+                if (request_space[0].notFull && coords.x > 0) begin
+                    request_space[0].enq(tagged Tag_EndToken 0);
+                    num_requests_sent = num_requests_sent + 1;
+                end 
+                if (request_space[1].notFull && coords.x < fromInteger(valueOf(NUM_PMUS) - 1)) begin
+                    request_space[1].enq(tagged Tag_EndToken 0);
+                    num_requests_sent = num_requests_sent + 1;  
+                end 
+                if (request_space[2].notFull && coords.y > 0) begin
+                    request_space[2].enq(tagged Tag_EndToken 0);
+                    num_requests_sent = num_requests_sent + 1;
+                end
+                if (request_space[3].notFull && coords.y < fromInteger(valueOf(NUM_PMUS) - 1)) begin
+                    request_space[3].enq(tagged Tag_EndToken 0);
+                    num_requests_sent = num_requests_sent + 1;
+                end 
+                if (num_requests_sent == 0) begin 
+                    $display("Cannot send space request to any direction");
+                end else begin
+                    space_request_in_flight <= True;
+                    num_space_requests_in_flight <= num_requests_sent;
+                end
             end
         endcase
     endrule
 
     rule store_tile (initialized && (isValid(next_free_set) || curr_loc.valid) &&& data_in.first matches tagged Tag_Data {.tt, .st});
-        // $display("Fired store_tile");
+        $display("Fired store_tile");
         data_in.deq;
 
         // initialization
@@ -278,7 +409,6 @@ module mkPMU#(
     method Int#(32) get_cycle_count();
         return unpack(cycle_count);
     endmethod
-
     interface Operation_IFC operation;
         method Action put(Int#(32) i, ChannelMessage msg); // i = 0 for data, 1 for token
             if (i == 0) begin

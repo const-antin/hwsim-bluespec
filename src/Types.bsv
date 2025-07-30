@@ -179,4 +179,21 @@ typedef struct {
     Bit#(TLog#(MAX_ENTRIES)) orig_token;
 } LoadState deriving(Bits, Eq);
 
+typedef enum {
+    North, 
+    South, 
+    East, 
+    West
+} Direction deriving(Bits, Eq, FShow);
+
+typedef struct {
+    UInt#(TLog#(NUM_PMUS)) x;
+    UInt#(TLog#(NUM_PMUS)) y;
+} Coords deriving(Bits, Eq);
+
+
+typedef union tagged {
+    // TODO: Add message types like deallocate, end token, etc. that i can use to send data around between pmus
+} MessageType deriving(Bits, Eq, FShow);
+
 endpackage
