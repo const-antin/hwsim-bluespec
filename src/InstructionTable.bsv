@@ -16,15 +16,15 @@ interface InstructionTable_IFC;
     method ActionValue#(Instruction_Ptr) add_pmu_instruction(PMUInstruction instruction);
     
     // Add instruction output mappings
-    method Action add_instruction_output(Instruction_Ptr instruction, PortIdx output_port_idx, 
-                                       Instruction_Ptr target_instruction, PortIdx target_port_idx);
+    method Action add_instruction_output(Instruction_Ptr instruction, 
+                                       Instruction_Ptr target_instruction);
     
     // Get configurations
     method ActionValue#(PCUAndTargetConfig) get_pcu_config(Instruction_Ptr instruction);
     method ActionValue#(PMUAndTargetConfig) get_pmu_config(Instruction_Ptr instruction);
     
     // Component allocation
-    method ActionValue#(Maybe#(Tuple2#(ComputeType, ComponentIdx))) get_alloc_component(Instruction_Ptr instruction);
+    method ActionValue#(GlobalComponentIdx) get_alloc_component(Instruction_Ptr instruction);
     method Action free_pcu(Integer pcu_idx);
     method Action free_pmu(Integer pmu_idx);
     
@@ -55,8 +55,9 @@ module mkInstructionTable(InstructionTable_IFC);
     Reg#(InstructionIdx) pcu_instruction_ctr <- mkReg(0);
     Reg#(InstructionIdx) pmu_instruction_ctr <- mkReg(0);
     
-    function Maybe#(ComponentIdx) find_free_pcu() = findIndex(isValid, pcu_allocation);
-    function Maybe#(ComponentIdx) find_free_pmu() = findIndex(isValid, pmu_allocation);
+    function isInvalid(m) = !isValid(m);
+    function Maybe#(ComponentIdx) find_free_pcu() = findIndex(isInvalid, pcu_allocation);
+    function Maybe#(ComponentIdx) find_free_pmu() = findIndex(isInvalid, pmu_allocation);
     
     function Bool free_pred(Instruction_Ptr test, Maybe#(Instruction_Ptr) instruction);
         let found = False;
@@ -92,15 +93,15 @@ module mkInstructionTable(InstructionTable_IFC);
     endmethod
     
     // Add instruction output mapping
-    method Action add_instruction_output(Instruction_Ptr instruction, PortIdx output_port_idx, 
-                                       Instruction_Ptr target_instruction, PortIdx target_port_idx);
+    method Action add_instruction_output(Instruction_Ptr instruction, 
+                                       Instruction_Ptr target_instruction);
         if (instruction.compute_type == ComputeType_PCU) begin
             let entry = pcu_targets.sub(instruction.instruction_idx);
-            entry.port_mappings[output_port_idx] = tagged Valid tuple2(target_instruction, target_port_idx);
+            entry.port_mappings[instruction.port_idx] = tagged Valid target_instruction;
             pcu_targets.upd(instruction.instruction_idx, entry);
         end else if (instruction.compute_type == ComputeType_PMU) begin
             let entry = pmu_targets.sub(instruction.instruction_idx);
-            entry.port_mappings[output_port_idx] = tagged Valid tuple2(target_instruction, target_port_idx);
+            entry.port_mappings[instruction.port_idx] = tagged Valid target_instruction;
             pmu_targets.upd(instruction.instruction_idx, entry);
         end else begin
             $display("Error: Invalid compute type %d", instruction.compute_type);
@@ -139,32 +140,40 @@ module mkInstructionTable(InstructionTable_IFC);
     endmethod
     
     // Get allocated component
-    method ActionValue#(Maybe#(Tuple2#(ComputeType, ComponentIdx))) get_alloc_component(Instruction_Ptr instruction);
-        Maybe#(Tuple2#(ComputeType, ComponentIdx)) ret = tagged Invalid;
+    method ActionValue#(GlobalComponentIdx) get_alloc_component(Instruction_Ptr instruction);
+        GlobalComponentIdx ret = tagged Tag_IO 0; // Default initialization
 
+        // Handle io instructions
         if (instruction.compute_type == ComputeType_Output) begin
-            ret = tagged Valid tuple2(ComputeType_Output, 0);
+            ret = tagged Tag_IO instruction.port_idx;
         end
         
-        // Check PCU allocations
-        else if (findIndex(free_pred(instruction), pcu_allocation) matches tagged Valid .idx) begin
-            ret = tagged Valid tuple2(ComputeType_PCU, idx);
-        end
-        else if (findIndex(free_pred(instruction), pmu_allocation) matches tagged Valid .idx) begin
-            ret = tagged Valid tuple2(ComputeType_PMU, idx);
+        // Handle PCU instructions
+        else if (instruction.compute_type == ComputeType_PCU) begin
+            if (findIndex(free_pred(instruction), pcu_allocation) matches tagged Valid .idx) begin
+                ret = tagged Tag_PCU idx;
+            end else if (find_free_pcu() matches tagged Valid .pcu_idx) begin
+                ret = tagged Tag_PCU pcu_idx;
+            end else begin
+                $display("Error: Failed to allocate PCU for instruction %s", fshow(instruction));
+                $finish(-1);
+            end
         end
         
-        // Try to allocate a new PCU
-        else if (find_free_pcu() matches tagged Valid .pcu_idx) begin
-            ret = tagged Valid tuple2(ComputeType_PCU, pcu_idx);
-        end
-        
-        // Try to allocate a new PMU
-        else if (find_free_pmu() matches tagged Valid .pmu_idx) begin
-            ret = tagged Valid tuple2(ComputeType_PMU, pmu_idx);
+        // Handle PMU instructions
+        else if (instruction.compute_type == ComputeType_PMU) begin
+            if (findIndex(free_pred(instruction), pmu_allocation) matches tagged Valid .idx) begin
+                ret = tagged Tag_PMU idx;
+            end else if (find_free_pmu() matches tagged Valid .pmu_idx) begin
+                ret = tagged Tag_PMU pmu_idx;
+            end else begin
+                $display("Error: Failed to allocate PMU for instruction %s", fshow(instruction));
+                $finish(-1);
+            end
         end
         else begin
-            ret = tagged Invalid;
+            $display("Error: Failed to allocate component for instruction %s", fshow(instruction));
+            $finish(-1);
         end 
         return ret;
     endmethod
@@ -229,7 +238,7 @@ module mkInstructionTableTest(Empty);
                 pcu_instruction_idx <= pcu_instruction;
             endaction
             action
-                instruction_table.add_instruction_output(pcu_instruction_idx, 0, pcu_instruction_idx, 0);
+                instruction_table.add_instruction_output(pcu_instruction_idx, pcu_instruction_idx);
             endaction 
             action
                 let pmu_instruction <- instruction_table.add_pmu_instruction(PMUInstruction {});

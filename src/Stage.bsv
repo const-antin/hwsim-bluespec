@@ -2,7 +2,7 @@ import Vector::*;
 import FIFO::*;
 import Parameters::*;
 import Types::*;
-import PCUInstruction::*;
+import Instructions::*;
 
 interface StageFunction_IFC;
     method Action put_input(Integer input_idx, Tuple2#(Data, StopToken) msg);

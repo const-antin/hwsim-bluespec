@@ -4,7 +4,7 @@ import Types::*;
 import Vector::*;
 import FIFO::*;
 import Parameters::*;
-import PCUInstruction::*;
+import Instructions::*;
 
 interface Interconnect_IFC;
     method Action add_instruction(Instruction instruction);

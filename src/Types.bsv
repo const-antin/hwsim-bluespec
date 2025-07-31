@@ -155,6 +155,19 @@ typedef union tagged {
 } Data deriving (Bits, FShow, Eq);
 
 typedef UInt#(16) InstructionIdx;
+typedef UInt#(
+    TLog#(
+        TMax#(
+            TMax#(
+                TMax#(NUM_INPUTS_PER_PCU, NUM_OUTPUTS_PER_PCU), 
+                TMax#(NUM_INPUTS_PER_PMU, NUM_OUTPUTS_PER_PMU)
+            ),
+            TMax#(
+                NUM_SYSTEM_OUTPUTS, 
+                NUM_SYSTEM_INPUTS)
+        )
+    )
+) PortIdx;
 
 typedef enum {
     ComputeType_Output,
@@ -165,13 +178,8 @@ typedef enum {
 typedef struct {
     ComputeType compute_type;
     InstructionIdx instruction_idx;
+    PortIdx port_idx;
 } Instruction_Ptr deriving (Bits, FShow, Eq);
-
-typedef struct {
-    Bool is_pcu;
-    UInt#(16) ptr;
-    UInt#(8) port_idx;
-} Instruction_Ptr_With_Target deriving (Bits, FShow, Eq);
 
 typedef union tagged {
     Tuple2#(Data, StopToken) Tag_Data;

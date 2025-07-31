@@ -136,7 +136,6 @@ typedef struct {
 
 // Type definitions matching the Rust implementation
 typedef UInt#(TLog#(TMax#(NUM_PCUS, NUM_PMUS))) ComponentIdx;
-typedef UInt#(8) PortIdx;
 
 // Reserved instruction indices
 // OUTPUT_INSTRUCTION = 0;
@@ -144,7 +143,7 @@ typedef UInt#(8) PortIdx;
 
 // Component target mapping
 typedef struct {
-    Vector#(TMax#(NUM_OUTPUTS_PER_PCU, NUM_OUTPUTS_PER_PMU), Maybe#(Tuple2#(Instruction_Ptr, PortIdx))) port_mappings;
+    Vector#(TMax#(NUM_OUTPUTS_PER_PCU, NUM_OUTPUTS_PER_PMU), Maybe#(Instruction_Ptr)) port_mappings;
 } ComponentTarget deriving (Bits, Eq, FShow);
 
 // PCU configuration with target
@@ -158,3 +157,15 @@ typedef struct {
     PMUInstruction pmu_config;
     ComponentTarget target;
 } PMUAndTargetConfig deriving (Bits, Eq, FShow);
+
+typedef union tagged {
+    UInt#(TLog#(NUM_PCUS)) Tag_PCU;
+    UInt#(TLog#(NUM_PMUS)) Tag_PMU;
+    UInt#(TLog#(TMax#(NUM_SYSTEM_OUTPUTS, NUM_SYSTEM_INPUTS))) Tag_IO;
+} GlobalComponentIdx deriving (Bits, Eq, FShow);
+
+typedef union tagged {
+    Tuple2#(UInt#(TLog#(NUM_PCUS)), UInt#(TLog#(TMax#(NUM_INPUTS_PER_PCU, NUM_OUTPUTS_PER_PCU)))) Tag_PCU_Port;
+    Tuple2#(UInt#(TLog#(NUM_PMUS)), UInt#(TLog#(TMax#(NUM_INPUTS_PER_PMU, NUM_OUTPUTS_PER_PMU)))) Tag_PMU_Port;
+    UInt#(TLog#(TMax#(NUM_SYSTEM_OUTPUTS, NUM_SYSTEM_INPUTS))) Tag_IO_Port;
+} GlobalPortIdx deriving (Bits, Eq, FShow);

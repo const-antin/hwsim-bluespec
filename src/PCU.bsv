@@ -198,6 +198,14 @@ module mkPCU(PCU_IFC);
                     spatial_matmul_t.set_cfg(spatial_matmul_t_inst);
                 end
         endcase
+
+        let port_mappings = instruction_response.first.target.port_mappings;
+        for (Integer i = 0; i < fromInteger(valueOf(NUM_INPUTS_PER_PCU)); i = i + 1) begin
+            if (port_mappings[i] matches tagged Valid .port_mapping) begin
+                $display("Enqueuing instruction %s to output %d", fshow(port_mapping), i);
+                external_outputs[i].enq(tagged Tag_Instruction port_mapping);
+            end
+        end
     endrule
 
     // Transition: Configuring -> Idle
@@ -410,7 +418,7 @@ module mkPCUReconfigurationTest(Empty);
                     pcu.put_instruction(PCUAndTargetConfig {
                         pcu_config: add_instruction,
                         target: ComponentTarget {
-                            port_mappings: replicate(tagged Invalid)
+                            port_mappings: cons(tagged Valid dummy_ptr_2, replicate(tagged Invalid))
                         }
                     });
                     pcu.put(0, tagged Tag_Data zero_tile);
@@ -424,7 +432,7 @@ module mkPCUReconfigurationTest(Empty);
                     pcu.put_instruction(PCUAndTargetConfig {
                         pcu_config: repeat_static_instruction,
                         target: ComponentTarget {
-                            port_mappings: replicate(tagged Invalid)
+                            port_mappings: cons(tagged Valid dummy_ptr, replicate(tagged Invalid))
                         }
                     });
                     pcu.put(1, tagged Tag_Instruction dummy_ptr_2);
@@ -437,7 +445,7 @@ module mkPCUReconfigurationTest(Empty);
                 endaction
             endseq
             seq // Data Outputs
-                repeat (6)
+                repeat (8)
                     action
                         let result <- pcu.get(0);
                         $display("Cycle %d: Result: ", cycle, fshow(result));
