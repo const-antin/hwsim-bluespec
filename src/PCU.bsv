@@ -336,6 +336,7 @@ module mkPCU(PCU_IFC);
     // endrule
 
     method ActionValue#(InstructionIdx) get_instruction_request();
+        instruction_request.deq;
         return instruction_request.first;
     endmethod
 

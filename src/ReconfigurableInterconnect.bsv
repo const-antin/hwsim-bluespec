@@ -14,10 +14,10 @@ import PCU::*;
 // Interface for the reconfigurable interconnect
 interface ReconfigurableInterconnect_IFC;
     method Action pcu_send_to_interconnect(Integer pcu_idx, Integer port_idx, ChannelMessage msg);
-    method Action pcu_get_from_interconnect(Integer pcu_idx, Integer port_idx, ChannelMessage msg);
+    method ActionValue#(ChannelMessage) pcu_get_from_interconnect(Integer pcu_idx, Integer port_idx);
 
     method Action pmu_send_to_interconnect(Integer pmu_idx, Integer port_idx, ChannelMessage msg);
-    method Action pmu_get_from_interconnect(Integer pmu_idx, Integer port_idx, ChannelMessage msg);
+    method ActionValue#(ChannelMessage) pmu_get_from_interconnect(Integer pmu_idx, Integer port_idx);
 
     method Action system_send_to_interconnect(Integer output_idx, ChannelMessage msg);
     method ActionValue#(ChannelMessage) system_get_from_interconnect(Integer output_idx);
@@ -70,9 +70,9 @@ module mkReconfigurableInterconnect#(InstructionTable_IFC instruction_table) (Re
             $display("Handling into interconnect %d", i);
             case (msg) matches
                 tagged Tag_Data {.data, .st}: begin
-                    $display("Enqueuing data to out of interconnect %d", i);
                     if (io_mapping[i] matches tagged Valid .valid) begin
                         let idx = output_index_type_to_uint(valid);
+                        $display("Enqueuing data to out of interconnect %d, into %d", i, idx);
                         out_of_interconnect[idx].enq(msg);
                     end else begin
                         $display("Error: Invalid IO mapping for into interconnect %d", i);
@@ -112,20 +112,20 @@ module mkReconfigurableInterconnect#(InstructionTable_IFC instruction_table) (Re
             endcase
         endrule
 
-        rule idling;
-            let idle = into_interconnect[i].first;
-            $display("Interconnect %d is idling with message %s", i, fshow(idle));
-        endrule 
+        // rule idling;
+        //     let idle = into_interconnect[i].first;
+        //     $display("Interconnect %d is idling with message %s", i, fshow(idle));
+        // endrule 
     end
 
     method Action pcu_send_to_interconnect(Integer pcu_idx, Integer port_idx, ChannelMessage msg);
         let idx = output_index_type_to_uint(tagged Tag_PCU_Port tuple2(fromInteger(pcu_idx), fromInteger(port_idx)));
         into_interconnect[idx].enq(msg);
     endmethod 
-    method Action pcu_get_from_interconnect(Integer pcu_idx, Integer port_idx, ChannelMessage msg);
+    method ActionValue#(ChannelMessage) pcu_get_from_interconnect(Integer pcu_idx, Integer port_idx);
         let idx = input_index_type_to_uint(tagged Tag_PCU_Port tuple2(fromInteger(pcu_idx), fromInteger(port_idx)));
         out_of_interconnect[idx].deq;
-        msg = out_of_interconnect[idx].first;
+        return out_of_interconnect[idx].first;
     endmethod 
 
     method Action pmu_send_to_interconnect(Integer pmu_idx, Integer port_idx, ChannelMessage msg);
@@ -133,10 +133,10 @@ module mkReconfigurableInterconnect#(InstructionTable_IFC instruction_table) (Re
         into_interconnect[idx].enq(msg);
     endmethod
 
-    method Action pmu_get_from_interconnect(Integer pmu_idx, Integer port_idx, ChannelMessage msg);
+    method ActionValue#(ChannelMessage) pmu_get_from_interconnect(Integer pmu_idx, Integer port_idx);
         let idx = input_index_type_to_uint(tagged Tag_PMU_Port tuple2(fromInteger(pmu_idx), fromInteger(port_idx)));
         out_of_interconnect[idx].deq;
-        msg = out_of_interconnect[idx].first;
+        return out_of_interconnect[idx].first;
     endmethod
 
     method Action system_send_to_interconnect(Integer output_idx, ChannelMessage msg);
@@ -200,12 +200,12 @@ module mkReconfigurableInterconnectTest(Empty);
                 $display("Sent data to system");
             endaction
             action 
-                interconnect.pcu_get_from_interconnect(0, 0, message);
-                $display("Received message for pcu: %s", fshow(message));
+                let msg <- interconnect.pcu_get_from_interconnect(0, 0);
+                $display("Received message for pcu: %s", fshow(msg));
             endaction
             action
-                interconnect.pcu_get_from_interconnect(0, 0, message);
-                $display("Received message for pcu: %s", fshow(message));
+                let msg <- interconnect.pcu_get_from_interconnect(0, 0);
+                $display("Received message for pcu: %s", fshow(msg));
             endaction
             action
                 let msg <- interconnect.system_get_from_interconnect(0);

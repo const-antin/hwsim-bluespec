@@ -20,8 +20,8 @@ interface InstructionTable_IFC;
                                        Instruction_Ptr target_instruction);
     
     // Get configurations
-    method ActionValue#(PCUAndTargetConfig) get_pcu_config(Instruction_Ptr instruction);
-    method ActionValue#(PMUAndTargetConfig) get_pmu_config(Instruction_Ptr instruction);
+    method ActionValue#(PCUAndTargetConfig) get_pcu_config(InstructionIdx instruction_idx);
+    method ActionValue#(PMUAndTargetConfig) get_pmu_config(InstructionIdx instruction_idx);
     
     // Component allocation
     method ActionValue#(GlobalComponentIdx) get_alloc_component(Instruction_Ptr instruction);
@@ -59,9 +59,9 @@ module mkInstructionTable(InstructionTable_IFC);
     function Maybe#(ComponentIdx) find_free_pcu() = findIndex(isInvalid, pcu_allocation);
     function Maybe#(ComponentIdx) find_free_pmu() = findIndex(isInvalid, pmu_allocation);
     
-    function Bool free_pred(Instruction_Ptr test, Maybe#(Instruction_Ptr) instruction);
+    function Bool allocated_pred(Instruction_Ptr test, Maybe#(Instruction_Ptr) instruction);
         let found = False;
-        if (instruction matches tagged Valid .instr &&& instr == test)
+        if (instruction matches tagged Valid .instr &&& instr.instruction_idx == test.instruction_idx &&& instr.compute_type == test.compute_type)
             found = True;
         return found;
     endfunction
@@ -110,14 +110,14 @@ module mkInstructionTable(InstructionTable_IFC);
     endmethod
     
     // Get PCU configuration
-    method ActionValue#(PCUAndTargetConfig) get_pcu_config(Instruction_Ptr instruction);
+    method ActionValue#(PCUAndTargetConfig) get_pcu_config(InstructionIdx instruction_idx);
         // Find the PCU with this instruction
-        let instruction_config = pcu_instructions.sub(instruction.instruction_idx);
+        let instruction_config = pcu_instructions.sub(instruction_idx);
         if (instruction_config matches tagged Invalid) begin
-            $display("Error: PCU instruction %d not in instruction table", instruction);
+            $display("Error: PCU instruction %d not in instruction table", instruction_idx);
             $finish(-1);
         end
-        let target = pcu_targets.sub(instruction.instruction_idx);
+        let target = pcu_targets.sub(instruction_idx);
         return PCUAndTargetConfig {
             pcu_config: instruction_config.Valid,
             target: target
@@ -125,14 +125,14 @@ module mkInstructionTable(InstructionTable_IFC);
     endmethod
     
     // Get PMU configuration
-    method ActionValue#(PMUAndTargetConfig) get_pmu_config(Instruction_Ptr instruction);
+    method ActionValue#(PMUAndTargetConfig) get_pmu_config(InstructionIdx instruction_idx);
         // Find the PMU with this instruction
-        let instruction_config = pmu_instructions.sub(instruction.instruction_idx);
+        let instruction_config = pmu_instructions.sub(instruction_idx);
         if (instruction_config matches tagged Invalid) begin
-            $display("Error: PMU instruction %d not in instruction table", instruction);
+            $display("Error: PMU instruction %d not in instruction table", instruction_idx);
             $finish(-1);
         end
-        let target = pmu_targets.sub(instruction.instruction_idx);
+        let target = pmu_targets.sub(instruction_idx);
         return PMUAndTargetConfig {
             pmu_config: instruction_config.Valid,
             target: target
@@ -150,10 +150,11 @@ module mkInstructionTable(InstructionTable_IFC);
         
         // Handle PCU instructions
         else if (instruction.compute_type == ComputeType_PCU) begin
-            if (findIndex(free_pred(instruction), pcu_allocation) matches tagged Valid .idx) begin
+            if (findIndex(allocated_pred(instruction), pcu_allocation) matches tagged Valid .idx) begin
                 ret = tagged Tag_PCU idx;
             end else if (find_free_pcu() matches tagged Valid .pcu_idx) begin
                 ret = tagged Tag_PCU pcu_idx;
+                pcu_allocation[pcu_idx] <= tagged Valid instruction;
             end else begin
                 $display("Error: Failed to allocate PCU for instruction %s", fshow(instruction));
                 $finish(-1);
@@ -162,10 +163,11 @@ module mkInstructionTable(InstructionTable_IFC);
         
         // Handle PMU instructions
         else if (instruction.compute_type == ComputeType_PMU) begin
-            if (findIndex(free_pred(instruction), pmu_allocation) matches tagged Valid .idx) begin
+            if (findIndex(allocated_pred(instruction), pmu_allocation) matches tagged Valid .idx) begin
                 ret = tagged Tag_PMU idx;
             end else if (find_free_pmu() matches tagged Valid .pmu_idx) begin
                 ret = tagged Tag_PMU pmu_idx;
+                pmu_allocation[pmu_idx] <= tagged Valid instruction;
             end else begin
                 $display("Error: Failed to allocate PMU for instruction %s", fshow(instruction));
                 $finish(-1);
@@ -245,11 +247,11 @@ module mkInstructionTableTest(Empty);
                 pmu_instruction_idx <= pmu_instruction;
             endaction
             action
-                let pcu_config <- instruction_table.get_pcu_config(pcu_instruction_idx);
+                let pcu_config <- instruction_table.get_pcu_config(pcu_instruction_idx.instruction_idx);
                 $display("PCU config: %s", fshow(pcu_config));
             endaction
             action
-                let pmu_config <- instruction_table.get_pmu_config(pmu_instruction_idx);
+                let pmu_config <- instruction_table.get_pmu_config(pmu_instruction_idx.instruction_idx);
                 $display("PMU config: %s", fshow(pmu_config));
             endaction
         endseq
