@@ -37,16 +37,16 @@ endinterface
 module mkPMU#(
     Int#(32) rank,                    // Rank of the current tile
     Coords coords, // x, y
-    Vector#(4, FIFOF#(ChannelMessage)) request_data, // North, South, West, East
-    Vector#(4, FIFOF#(ChannelMessage)) receive_request_data,
-    Vector#(4, FIFOF#(ChannelMessage)) send_data,
-    Vector#(4, FIFOF#(ChannelMessage)) receive_send_data,
-    Vector#(4, FIFOF#(ChannelMessage)) request_space,
-    Vector#(4, FIFOF#(ChannelMessage)) receive_request_space,
-    Vector#(4, FIFOF#(ChannelMessage)) send_space,
-    Vector#(4, FIFOF#(ChannelMessage)) receive_send_space,
-    Vector#(4, FIFOF#(ChannelMessage)) send_dealloc,
-    Vector#(4, FIFOF#(ChannelMessage)) receive_send_dealloc
+    Vector#(4, FIFOF#(MessageType)) request_data, // North, South, West, East
+    Vector#(4, FIFOF#(MessageType)) receive_request_data,
+    Vector#(4, FIFOF#(MessageType)) send_data,
+    Vector#(4, FIFOF#(MessageType)) receive_send_data,
+    Vector#(4, FIFOF#(MessageType)) request_space,
+    Vector#(4, FIFOF#(MessageType)) receive_request_space,
+    Vector#(4, FIFOF#(MessageType)) send_space,
+    Vector#(4, FIFOF#(MessageType)) receive_send_space,
+    Vector#(4, FIFOF#(MessageType)) send_dealloc,
+    Vector#(4, FIFOF#(MessageType)) receive_send_dealloc
 )(PMU_IFC);
     // ============================================================================
     // Internal state
@@ -75,9 +75,6 @@ module mkPMU#(
     RegFile#(Bit#(TLog#(MAX_ENTRIES)), Maybe#(StorageAddr)) first_entry <- mkRegFileWCF(0, fromInteger(valueOf(MAX_ENTRIES) - 1));    
     RegFile#(Bit#(TLog#(MAX_ENTRIES)), Bool) token_complete <- mkRegFileWCF(0, fromInteger(valueOf(MAX_ENTRIES) - 1));
     Vector#(MAX_ENTRIES, ConfigReg#(Maybe#(StorageAddr))) next_table <- replicateM(mkConfigReg(tagged Invalid));
-    // TODO: Pack this pmu id table into the storage addr
-    // I'm gonna need a lot of logic to send around the data that comes from storing the chain on different pmus
-    Vector#(MAX_ENTRIES, ConfigReg#(Maybe#(Coords))) pmu_id_table <- replicateM(mkConfigReg(tagged Invalid)); // TODO: Unused for static
     Reg#(StorageAddr) prev_stored <- mkReg(0);
 
     // load and deallocate registers
@@ -93,7 +90,7 @@ module mkPMU#(
     // Rule Orderings
     // ============================================================================
 
-    (* execution_order = "cycle_counter, store_tile, next_free, continue_load_tile" *)
+    (* execution_order = "cycle_counter, round_robin_space_request, store_tile, next_free, continue_load_tile" *)
     (* execution_order = "cycle_counter, start_load_tile" *)
     (* descending_urgency = "deallocate_token, store_tile, round_robin_space_request" *)
 
@@ -107,7 +104,7 @@ module mkPMU#(
         deallocate_reg <= tagged Invalid;
     endrule
 
-    rule round_robin_space_request (initialized);
+    rule round_robin_space_request (initialized &&& isValid(next_free_set));
         Bool north_has_data = receive_request_space[0].notEmpty && send_space[0].notFull;
         Bool south_has_data = receive_request_space[1].notEmpty && send_space[1].notFull;
         Bool west_has_data = receive_request_space[2].notEmpty && send_space[2].notFull;
@@ -128,28 +125,32 @@ module mkPMU#(
                         $display("PMU %d, %d: Received space request from north", coords.x, coords.y);
                         found = True;
                         found_index = 0;
-                        send_space[0].enq(tagged Tag_EndToken 0);
+                        send_space[0].enq(tagged Tag_StorageAddr packLocation(next_free_set.Valid, 0, coords.x, coords.y));
+                        next_free_set <= tagged Invalid;
                     end
                     1: if (south_has_data) begin
                         receive_request_space[1].deq;
                         $display("PMU %d, %d: Received space request from south", coords.x, coords.y);
                         found = True;
                         found_index = 1;
-                        send_space[1].enq(tagged Tag_EndToken 0);
+                        send_space[1].enq(tagged Tag_StorageAddr packLocation(next_free_set.Valid, 0, coords.x, coords.y));
+                        next_free_set <= tagged Invalid;
                     end
                     2: if (west_has_data) begin
                         receive_request_space[2].deq;
                         $display("PMU %d, %d: Received space request from west", coords.x, coords.y);
                         found = True;
                         found_index = 2;
-                        send_space[2].enq(tagged Tag_EndToken 0);
+                        send_space[2].enq(tagged Tag_StorageAddr packLocation(next_free_set.Valid, 0, coords.x, coords.y));
+                        next_free_set <= tagged Invalid;
                     end
                     3: if (east_has_data) begin
                         receive_request_space[3].deq;
                         $display("PMU %d, %d: Received space request from east", coords.x, coords.y);
                         found = True;
                         found_index = 3;
-                        send_space[3].enq(tagged Tag_EndToken 0);
+                        send_space[3].enq(tagged Tag_StorageAddr packLocation(next_free_set.Valid, 0, coords.x, coords.y));
+                        next_free_set <= tagged Invalid;
                     end
                 endcase
             end
@@ -171,22 +172,26 @@ module mkPMU#(
 
         if (north_has_data) begin
             receive_send_space[0].deq;
-            $display("Received space at pmu %d, %d from north", coords.x, coords.y);
+            let {set, frame, x, y} = unpackLocation(receive_send_space[0].first.Tag_StorageAddr);
+            $display("Received space set %d, frame %d, at pmu %d, %d from north", set, frame, coords.x, coords.y);
             num_responses_received = num_responses_received + 1;
         end 
         if (south_has_data) begin
             receive_send_space[1].deq;
-            $display("Received space at pmu %d, %d from south", coords.x, coords.y);
+            let {set, frame, x, y} = unpackLocation(receive_send_space[1].first.Tag_StorageAddr);
+            $display("Received space set %d, frame %d, at pmu %d, %d from south", set, frame, coords.x, coords.y);
             num_responses_received = num_responses_received + 1;
         end 
         if (west_has_data) begin
             receive_send_space[2].deq;
-            $display("Received space at pmu %d, %d from west", coords.x, coords.y);
+            let {set, frame, x, y} = unpackLocation(receive_send_space[2].first.Tag_StorageAddr);
+            $display("Received space set %d, frame %d, at pmu %d, %d from west", set, frame, coords.x, coords.y);
             num_responses_received = num_responses_received + 1;
         end 
         if (east_has_data) begin
             receive_send_space[3].deq;
-            $display("Received space at pmu %d, %d from east", coords.x, coords.y);
+            let {set, frame, x, y} = unpackLocation(receive_send_space[3].first.Tag_StorageAddr);
+            $display("Received space set %d, frame %d, at pmu %d, %d from east", set, frame, coords.x, coords.y);
             num_responses_received = num_responses_received + 1;
         end
 
@@ -262,19 +267,17 @@ module mkPMU#(
 
         // update the storage location pointer chain
         if (first_entry.sub(token_counter) matches tagged Invalid) begin
-            let p = packLocation(set, frame);
+            let p = packLocation(set, frame, coords.x, coords.y);
             first_entry.upd(token_counter, tagged Valid p);
             next_table[p] <= tagged Invalid;
-            // pmu_id_table[p] <= 0; // TODO: Dynamic pmu ids
             prev_stored <= p;
         end else begin
-            let p = packLocation(set, frame);
+            let p = packLocation(set, frame, coords.x, coords.y);
             next_table[prev_stored] <= tagged Valid p;
             if (prev_stored != p) begin
                 next_table[p] <= tagged Invalid;
             end
             prev_stored <= p;
-            // pmu_id_table[p] <= 0; // TODO: Dynamic pmu ids
         end
 
         if (emit_token) begin
@@ -309,14 +312,14 @@ module mkPMU#(
         Bool has_next_piece = isValid(next_table[loc]);
 
         if (token_is_complete || has_next_piece) begin
-            let {set, frame} = unpackLocation(loc);
+            let {set, frame, x, y} = unpackLocation(loc);
             let tile = mem.read(set, frame);
             let out_rank = tile.st;
 
             // Check if weve processed all entries for this token
             let next_set = set + 1;
             if (next_table[loc] matches tagged Valid .next_loc) begin
-                let {next_set_unpacked, _} = unpackLocation(next_loc); // used to know if weve read every frame in the set
+                let {next_set_unpacked, _, _2, _3} = unpackLocation(next_loc); // used to know if weve read every frame in the set
                 next_set = next_set_unpacked;
                 load_token <= tagged Valid LoadState { loc: next_loc, deallocate: deallocate, st: st, orig_token: orig_token };
             end else begin

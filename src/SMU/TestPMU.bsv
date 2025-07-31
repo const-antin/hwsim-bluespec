@@ -37,7 +37,7 @@ typedef 4 ENTRY_SIZE;
 // ============================================================================
 (* synthesize *)
 module mkTestPMU();
-    Vector#(4, FIFOF#(ChannelMessage)) dummy_fifos <- replicateM(mkFIFOF);
+    Vector#(4, FIFOF#(MessageType)) dummy_fifos <- replicateM(mkFIFOF);
     PMU_IFC pmu <- mkPMU(fromInteger(valueOf(RANK)), Coords { x: 0, y: 0 }, dummy_fifos, dummy_fifos, dummy_fifos, dummy_fifos, dummy_fifos, dummy_fifos, dummy_fifos, dummy_fifos, dummy_fifos, dummy_fifos);
 
     function TaggedTile testValues(Bit#(TLog#(TAdd#(TestPMU::NUM_TEST_VALUES, 2))) i);
@@ -169,7 +169,7 @@ endmodule
 // (* synthesize *)
 module mkTestPMUStopToken(Empty);
     let rank = 3;
-    Vector#(4, FIFOF#(ChannelMessage)) dummy_fifos <- replicateM(mkFIFOF);
+    Vector#(4, FIFOF#(MessageType)) dummy_fifos <- replicateM(mkFIFOF);
     PMU_IFC dut <- mkPMU(fromInteger(valueOf(RANK)), Coords { x: 0, y: 0 }, dummy_fifos, dummy_fifos, dummy_fifos, dummy_fifos, dummy_fifos, dummy_fifos, dummy_fifos, dummy_fifos, dummy_fifos, dummy_fifos);
     let rpt <- mkRepeatStatic(2);  
     let drained <- mkReg(0);
@@ -216,27 +216,27 @@ endmodule
 module mkTestPMUGrid(Empty);
 
     // Create shared FIFOs for the mesh
-    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(ChannelMessage))) ns_request_data <- replicateM(replicateM(mkGFIFOF(False, False)));
-    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(ChannelMessage))) sn_request_data <- replicateM(replicateM(mkGFIFOF(False, False)));
-    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(ChannelMessage))) ns_send_data <- replicateM(replicateM(mkGFIFOF(False, False)));
-    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(ChannelMessage))) sn_send_data <- replicateM(replicateM(mkGFIFOF(False, False)));
-    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(ChannelMessage))) ns_request_space <- replicateM(replicateM(mkGFIFOF(True, True)));
-    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(ChannelMessage))) sn_request_space <- replicateM(replicateM(mkGFIFOF(True, True)));
-    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(ChannelMessage))) ns_send_space <- replicateM(replicateM(mkGFIFOF(False, False)));
-    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(ChannelMessage))) sn_send_space <- replicateM(replicateM(mkGFIFOF(False, False)));
-    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(ChannelMessage))) ns_send_dealloc <- replicateM(replicateM(mkGFIFOF(False, False)));
-    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(ChannelMessage))) sn_send_dealloc <- replicateM(replicateM(mkGFIFOF(False, False)));
+    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) ns_request_data <- replicateM(replicateM(mkGFIFOF(False, False)));
+    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) sn_request_data <- replicateM(replicateM(mkGFIFOF(False, False)));
+    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) ns_send_data <- replicateM(replicateM(mkGFIFOF(False, False)));
+    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) sn_send_data <- replicateM(replicateM(mkGFIFOF(False, False)));
+    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) ns_request_space <- replicateM(replicateM(mkGFIFOF(True, True)));
+    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) sn_request_space <- replicateM(replicateM(mkGFIFOF(True, True)));
+    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) ns_send_space <- replicateM(replicateM(mkGFIFOF(False, False)));
+    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) sn_send_space <- replicateM(replicateM(mkGFIFOF(False, False)));
+    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) ns_send_dealloc <- replicateM(replicateM(mkGFIFOF(False, False)));
+    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) sn_send_dealloc <- replicateM(replicateM(mkGFIFOF(False, False)));
 
-    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(ChannelMessage))) ew_request_data <- replicateM(replicateM(mkGFIFOF(False, False)));
-    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(ChannelMessage))) we_request_data <- replicateM(replicateM(mkGFIFOF(False, False)));
-    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(ChannelMessage))) ew_send_data <- replicateM(replicateM(mkGFIFOF(False, False)));
-    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(ChannelMessage))) we_send_data <- replicateM(replicateM(mkGFIFOF(False, False)));
-    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(ChannelMessage))) ew_request_space <- replicateM(replicateM(mkGFIFOF(True, True)));
-    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(ChannelMessage))) we_request_space <- replicateM(replicateM(mkGFIFOF(True, True)));
-    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(ChannelMessage))) ew_send_space <- replicateM(replicateM(mkGFIFOF(False, False)));
-    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(ChannelMessage))) we_send_space <- replicateM(replicateM(mkGFIFOF(False, False)));
-    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(ChannelMessage))) ew_send_dealloc <- replicateM(replicateM(mkGFIFOF(False, False)));
-    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(ChannelMessage))) we_send_dealloc <- replicateM(replicateM(mkGFIFOF(False, False)));
+    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) ew_request_data <- replicateM(replicateM(mkGFIFOF(False, False)));
+    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) we_request_data <- replicateM(replicateM(mkGFIFOF(False, False)));
+    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) ew_send_data <- replicateM(replicateM(mkGFIFOF(False, False)));
+    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) we_send_data <- replicateM(replicateM(mkGFIFOF(False, False)));
+    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) ew_request_space <- replicateM(replicateM(mkGFIFOF(True, True)));
+    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) we_request_space <- replicateM(replicateM(mkGFIFOF(True, True)));
+    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) ew_send_space <- replicateM(replicateM(mkGFIFOF(False, False)));
+    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) we_send_space <- replicateM(replicateM(mkGFIFOF(False, False)));
+    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) ew_send_dealloc <- replicateM(replicateM(mkGFIFOF(False, False)));
+    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) we_send_dealloc <- replicateM(replicateM(mkGFIFOF(False, False)));
 
     // Instantiate the PMUs
     Vector#(NUM_PMUS, Vector#(NUM_PMUS, PMU_IFC)) pmus;
@@ -245,61 +245,61 @@ module mkTestPMUGrid(Empty);
 
     for (Integer i = 0; i < valueOf(NUM_PMUS); i = i + 1) begin
         for (Integer j = 0; j < valueOf(NUM_PMUS); j = j + 1) begin
-            Vector#(4, FIFOF#(ChannelMessage)) request_data = newVector();
+            Vector#(4, FIFOF#(MessageType)) request_data = newVector();
             request_data[0] = sn_request_data[i][j];     // North
             request_data[1] = ns_request_data[i + 1][j]; // South
             request_data[2] = ew_request_data[i][j];     // West
             request_data[3] = we_request_data[i][j + 1]; // East
 
-            Vector#(4, FIFOF#(ChannelMessage)) receive_request_data = newVector();
+            Vector#(4, FIFOF#(MessageType)) receive_request_data = newVector();
             receive_request_data[0] = ns_request_data[i][j];     // North
             receive_request_data[1] = sn_request_data[i + 1][j]; // South
             receive_request_data[2] = we_request_data[i][j];     // West
             receive_request_data[3] = ew_request_data[i][j + 1]; // East
 
-            Vector#(4, FIFOF#(ChannelMessage)) send_data = newVector();
+            Vector#(4, FIFOF#(MessageType)) send_data = newVector();
             send_data[0] = sn_send_data[i][j];
             send_data[1] = ns_send_data[i + 1][j];
             send_data[2] = ew_send_data[i][j];
             send_data[3] = we_send_data[i][j + 1];
 
-            Vector#(4, FIFOF#(ChannelMessage)) receive_send_data = newVector();
+            Vector#(4, FIFOF#(MessageType)) receive_send_data = newVector();
             receive_send_data[0] = ns_send_data[i][j];
             receive_send_data[1] = sn_send_data[i + 1][j];
             receive_send_data[2] = we_send_data[i][j];
             receive_send_data[3] = ew_send_data[i][j + 1];
 
-            Vector#(4, FIFOF#(ChannelMessage)) request_space = newVector();
+            Vector#(4, FIFOF#(MessageType)) request_space = newVector();
             request_space[0] = sn_request_space[i][j];     // North
             request_space[1] = ns_request_space[i + 1][j]; // South
             request_space[2] = ew_request_space[i][j];     // West
             request_space[3] = we_request_space[i][j + 1]; // East
 
-            Vector#(4, FIFOF#(ChannelMessage)) receive_request_space = newVector();
+            Vector#(4, FIFOF#(MessageType)) receive_request_space = newVector();
             receive_request_space[0] = ns_request_space[i][j];     // North
             receive_request_space[1] = sn_request_space[i + 1][j]; // South
             receive_request_space[2] = we_request_space[i][j];     // West
             receive_request_space[3] = ew_request_space[i][j + 1]; // East
 
-            Vector#(4, FIFOF#(ChannelMessage)) send_space = newVector();
+            Vector#(4, FIFOF#(MessageType)) send_space = newVector();
             send_space[0] = sn_send_space[i][j];
             send_space[1] = ns_send_space[i + 1][j];
             send_space[2] = ew_send_space[i][j];
             send_space[3] = we_send_space[i][j + 1];
 
-            Vector#(4, FIFOF#(ChannelMessage)) receive_send_space = newVector();
+            Vector#(4, FIFOF#(MessageType)) receive_send_space = newVector();
             receive_send_space[0] = ns_send_space[i][j];
             receive_send_space[1] = sn_send_space[i + 1][j];
             receive_send_space[2] = we_send_space[i][j];
             receive_send_space[3] = ew_send_space[i][j + 1];
 
-            Vector#(4, FIFOF#(ChannelMessage)) send_dealloc = newVector();
+            Vector#(4, FIFOF#(MessageType)) send_dealloc = newVector();
             send_dealloc[0] = sn_send_dealloc[i][j];
             send_dealloc[1] = ns_send_dealloc[i + 1][j];
             send_dealloc[2] = ew_send_dealloc[i][j];
             send_dealloc[3] = we_send_dealloc[i][j + 1];
 
-            Vector#(4, FIFOF#(ChannelMessage)) receive_send_dealloc = newVector();
+            Vector#(4, FIFOF#(MessageType)) receive_send_dealloc = newVector();
             receive_send_dealloc[0] = ns_send_dealloc[i][j];
             receive_send_dealloc[1] = sn_send_dealloc[i + 1][j];
             receive_send_dealloc[2] = we_send_dealloc[i][j];

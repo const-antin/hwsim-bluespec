@@ -170,7 +170,8 @@ typedef struct {
     Bool valid;
 } StorageLocation deriving(Bits, Eq);
 
-typedef UInt#(TAdd#(TLog#(SETS), TLog#(FRAMES_PER_SET))) StorageAddr;
+typedef UInt#(TLog#(NUM_PMUS)) CoordType;
+typedef UInt#(TAdd#(TLog#(SETS), TAdd#(TLog#(FRAMES_PER_SET), TAdd#(TLog#(NUM_PMUS), TLog#(NUM_PMUS))))) StorageAddr;
 
 typedef struct {
     StorageAddr loc;
@@ -187,13 +188,16 @@ typedef enum {
 } Direction deriving(Bits, Eq, FShow);
 
 typedef struct {
-    UInt#(TLog#(NUM_PMUS)) x;
-    UInt#(TLog#(NUM_PMUS)) y;
+    CoordType x;
+    CoordType y;
 } Coords deriving(Bits, Eq);
+
 
 
 typedef union tagged {
     // TODO: Add message types like deallocate, end token, etc. that i can use to send data around between pmus
+    StorageAddr Tag_StorageAddr;
+    EndToken Tag_EndToken;
 } MessageType deriving(Bits, Eq, FShow);
 
 endpackage

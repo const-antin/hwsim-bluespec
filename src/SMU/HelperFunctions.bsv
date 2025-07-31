@@ -8,15 +8,20 @@ import Parameters::*;
 // ============================================================================
 
 // pack and unpack set and frame into a single address
-function StorageAddr packLocation(SET_INDEX set, FRAME_INDEX frame);
-    return unpack({pack(set), pack(frame)});
+function StorageAddr packLocation(SET_INDEX set, FRAME_INDEX frame, CoordType x, CoordType y);
+    return unpack({pack(set), pack(frame), pack(x), pack(y)});
 endfunction
 
-function Tuple2#(SET_INDEX, FRAME_INDEX) unpackLocation(StorageAddr addr);
+function Tuple4#(SET_INDEX, FRAME_INDEX, CoordType, CoordType) unpackLocation(StorageAddr addr);
     let frame_bits = valueOf(TLog#(FRAMES_PER_SET));
-    SET_INDEX set = truncate(pack(addr) >> frame_bits);
-    FRAME_INDEX frame = truncate(pack(addr));
-    return tuple2(set, frame);
+    let coord_bits = valueOf(TLog#(NUM_PMUS));
+    
+    SET_INDEX set = truncate(pack(addr) >> (frame_bits + 2 * coord_bits));
+    FRAME_INDEX frame = truncate(pack(addr) >> (2 * coord_bits));
+    CoordType x = unpack(truncate(pack(addr) >> coord_bits));
+    CoordType y = unpack(truncate(pack(addr)));
+    
+    return tuple4(set, frame, x, y);
 endfunction
 
 // Process stop token
