@@ -7,23 +7,6 @@ import Parameters::*;
 // Helper Functions
 // ============================================================================
 
-// pack and unpack set and frame into a single address
-function StorageAddr packLocation(SET_INDEX set, FRAME_INDEX frame, CoordType x, CoordType y);
-    return unpack({pack(set), pack(frame), pack(x), pack(y)});
-endfunction
-
-function Tuple4#(SET_INDEX, FRAME_INDEX, CoordType, CoordType) unpackLocation(StorageAddr addr);
-    let frame_bits = valueOf(TLog#(FRAMES_PER_SET));
-    let coord_bits = valueOf(TLog#(NUM_PMUS));
-    
-    SET_INDEX set = truncate(pack(addr) >> (frame_bits + 2 * coord_bits));
-    FRAME_INDEX frame = truncate(pack(addr) >> (2 * coord_bits));
-    CoordType x = unpack(truncate(pack(addr) >> coord_bits));
-    CoordType y = unpack(truncate(pack(addr)));
-    
-    return tuple4(set, frame, x, y);
-endfunction
-
 // Process stop token
 function Tuple2#(StopToken, Bool) processStopToken(StopToken st, Int#(32) rank); // returns new stop token and whether to emit the token
     if (st >= rank) begin
@@ -86,6 +69,76 @@ function Tuple2#(UInt#(32), UInt#(32)) getNeighborPosition(Direction dir, UInt#(
         East:  return tuple2(row, col + 1);
         West:  return tuple2(row, col - 1);
     endcase
+endfunction
+
+// Convert direction index to string name
+function String directionIndexToName(UInt#(2) index);
+    case (index) matches
+        0: return "north";
+        1: return "south";
+        2: return "west";
+        3: return "east";
+        default: return "unknown";
+    endcase
+endfunction
+
+// Get the direction to take one step toward target coordinates
+function Direction getNeighborDirection(Coords current, Coords target);
+    // Calculate differences
+    Int#(33) dx = unpack(extend(pack(target.x))) - unpack(extend(pack(current.x)));
+    Int#(33) dy = unpack(extend(pack(target.y))) - unpack(extend(pack(current.y)));
+    
+    // Determine which direction to go based on the larger difference
+    // If x difference is larger (or equal), move horizontally
+    if (abs(dx) >= abs(dy)) begin
+        if (dx > 0) begin
+            return East;
+        end else if (dx < 0) begin
+            return West;
+        end else begin
+            // dx == 0, move vertically
+            if (dy > 0) begin
+                return South;
+            end else if (dy < 0) begin
+                return North;
+            end else begin
+                // Were already at the target
+                return North; // Default, shouldnt happen
+            end
+        end
+    end else begin
+        // y difference is larger, move vertically
+        if (dy > 0) begin
+            return South;
+        end else if (dy < 0) begin
+            return North;
+        end else begin
+            // dy == 0, move horizontally
+            if (dx > 0) begin
+                return East;
+            end else if (dx < 0) begin
+                return West;
+            end else begin
+                // Were already at the target
+                return North; // Default, shouldnt happen
+            end
+        end
+    end
+endfunction
+
+// Helper function to get absolute value
+function Int#(33) abs(Int#(33) x);
+    return (x < 0) ? -x : x;
+endfunction
+
+// Create a function to convert set and frame to index
+function Bit#(TLog#(MAX_ENTRIES)) storageToIndex(UInt#(TLog#(SETS)) set, UInt#(TLog#(FRAMES_PER_SET)) frame);
+    return zeroExtend(unpack(pack(set))) * fromInteger(valueOf(FRAMES_PER_SET)) + zeroExtend(unpack(pack(frame)));
+endfunction
+
+// Or create an overloaded version that takes StorageAddr
+function Bit#(TLog#(MAX_ENTRIES)) storageAddrToIndex(StorageAddr addr);
+    return storageToIndex(addr.set, addr.frame);
 endfunction
 
 endpackage

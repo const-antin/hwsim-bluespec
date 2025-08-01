@@ -6,6 +6,7 @@
 // TODO: Swap registers for SRAM
 // TODO: rank shouldnt be a parameter, should be stored in a reg and parsed from a config input
 // TODO: Technically having the entry ports to be guarded might be a problem, because if I want to enqueue only in one direction, but another blocks, thats wrong.
+// TODO: Fair aribitration between directions data is sent, currently prioritizes north, then south, then west, then east.
 
 package PMU;
 
@@ -68,31 +69,52 @@ module mkPMU#(
     BankedMemory_IFC mem <- mkBankedMemory;
     SetFreeList_IFC free_list <- mkSetFreeList;
     SetUsageTracker_IFC usage_tracker <- mkSetUsageTracker;
-    Reg#(StorageLocation) curr_loc <- mkReg(StorageLocation { set: 0, frame: 0, valid: False });
-    ConfigReg#(Maybe#(SET_INDEX)) next_free_set <- mkConfigReg(tagged Invalid);
+    Reg#(Maybe#(StorageAddr)) curr_loc <- mkReg(tagged Invalid);
+    Reg#(Maybe#(StorageAddr)) prev_loc <- mkReg(tagged Invalid);
+    ConfigReg#(Maybe#(StorageAddr)) next_free_set <- mkConfigReg(tagged Invalid);
 
     // storage chain logic
     RegFile#(Bit#(TLog#(MAX_ENTRIES)), Maybe#(StorageAddr)) first_entry <- mkRegFileWCF(0, fromInteger(valueOf(MAX_ENTRIES) - 1));    
     RegFile#(Bit#(TLog#(MAX_ENTRIES)), Bool) token_complete <- mkRegFileWCF(0, fromInteger(valueOf(MAX_ENTRIES) - 1));
     Vector#(MAX_ENTRIES, ConfigReg#(Maybe#(StorageAddr))) next_table <- replicateM(mkConfigReg(tagged Invalid));
-    Reg#(StorageAddr) prev_stored <- mkReg(0);
+    Reg#(StorageAddr) prev_stored <- mkReg(StorageAddr { set: 0, frame: 0, x: 0, y: 0 });
 
     // load and deallocate registers
-    Reg#(Maybe#(LoadState)) load_token <- mkReg(tagged Invalid);
+    ConfigReg#(Maybe#(LoadState)) load_token <- mkConfigReg(tagged Invalid);
     ConfigReg#(Maybe#(Bit#(TLog#(MAX_ENTRIES)))) deallocate_reg <- mkConfigReg(tagged Invalid);
 
     // Round robin counter for space requests
-    Reg#(Bit#(3)) space_round_robin_counter <- mkReg(0);
+    Reg#(Bit#(32)) space_round_robin_counter <- mkReg(0);
     Reg#(Bool) space_request_in_flight <- mkReg(False);
     Reg#(Int#(32)) num_space_requests_in_flight <- mkReg(0);
+
+    // Round robin counter for deallocate requests
+    Reg#(Bit#(32)) dealloc_round_robin_counter <- mkReg(0);
+
+    // Round robin counter for store_data requests
+    Reg#(Bit#(32)) receive_send_data_round_robin_counter_store <- mkReg(0);
+    Reg#(Bit#(32)) receive_send_data_round_robin_counter_load <- mkReg(0);
+    Reg#(Bit#(32)) receive_request_data_round_robin_counter <- mkReg(0);
+
+    Reg#(Bool) data_request_in_flight <- mkReg(False);
+
+    Wire#(Maybe#(Bit#(2))) store_direction <- mkDWire(tagged Invalid);
 
     // ============================================================================
     // Rule Orderings
     // ============================================================================
 
-    (* execution_order = "cycle_counter, round_robin_space_request, store_tile, next_free, continue_load_tile" *)
-    (* execution_order = "cycle_counter, start_load_tile" *)
+    (* execution_order = "cycle_counter, round_robin_space_request, receive_send_space, store_tile, next_free, continue_load_tile" *)
+    (* execution_order = "cycle_counter, start_load_tile, receive_send_data_load" *)
+    (* execution_order = "receive_deallocate, next_free, continue_load_tile" *)
+    (* execution_order = "receive_request_data, next_free" *)
+    (* execution_order = "receive_deallocate, receive_request_data" *)
+    (* execution_order = "receive_request_data, continue_load_tile" *)
     (* descending_urgency = "deallocate_token, store_tile, round_robin_space_request" *)
+    (* descending_urgency = "store_tile, receive_send_data_store" *)
+    (* descending_urgency = "store_tile, receive_request_data" *)
+
+    // (* mutually_exclusive = "receive_send_data_load, continue_load_tile" *)
 
     // ============================================================================
     // Main Logic Rules
@@ -104,101 +126,98 @@ module mkPMU#(
         deallocate_reg <= tagged Invalid;
     endrule
 
+    rule space_request_no (initialized &&& !isValid(next_free_set));
+        function notEmptyFunc(x) = tpl_1(x).notEmpty && tpl_2(x).notFull; 
+        Vector#(4, Bool) has_data = map(notEmptyFunc, zip(receive_request_space, send_space));
+        
+        for (Bit#(32) i = 0; i < 4; i = i + 1) begin
+            if (has_data[i]) begin
+                receive_request_space[i].deq;
+                send_space[i].enq(tagged Tag_FreeSpaceNo);
+            end
+        end
+    endrule
+
     rule round_robin_space_request (initialized &&& isValid(next_free_set));
-        Bool north_has_data = receive_request_space[0].notEmpty && send_space[0].notFull;
-        Bool south_has_data = receive_request_space[1].notEmpty && send_space[1].notFull;
-        Bool west_has_data = receive_request_space[2].notEmpty && send_space[2].notFull;
-        Bool east_has_data = receive_request_space[3].notEmpty && send_space[3].notFull;
+        function notEmptyFunc(x) = tpl_1(x).notEmpty && tpl_2(x).notFull; 
+        Vector#(4, Bool) has_data = map(notEmptyFunc, zip(receive_request_space, send_space));
         
         // Find the next available FIFO in round-robin order
         Bool found = False;
-        Bit#(3) found_index = 0;
-        Bit#(3) current = space_round_robin_counter;
+        Bit#(32) found_index = 0;
+        Bit#(32) current = space_round_robin_counter;
         
-        // Try up to 4 times to find an available FIFO
-        for (Bit#(3) i = 0; i < 4; i = i + 1) begin
+        for (Bit#(32) i = 0; i < 4; i = i + 1) begin
             let idx = (current + i) % 4;
             if (!found) begin
-                case (idx) matches
-                    0: if (north_has_data) begin
-                        receive_request_space[0].deq;
-                        $display("PMU %d, %d: Received space request from north", coords.x, coords.y);
-                        found = True;
-                        found_index = 0;
-                        send_space[0].enq(tagged Tag_StorageAddr packLocation(next_free_set.Valid, 0, coords.x, coords.y));
-                        next_free_set <= tagged Invalid;
-                    end
-                    1: if (south_has_data) begin
-                        receive_request_space[1].deq;
-                        $display("PMU %d, %d: Received space request from south", coords.x, coords.y);
-                        found = True;
-                        found_index = 1;
-                        send_space[1].enq(tagged Tag_StorageAddr packLocation(next_free_set.Valid, 0, coords.x, coords.y));
-                        next_free_set <= tagged Invalid;
-                    end
-                    2: if (west_has_data) begin
-                        receive_request_space[2].deq;
-                        $display("PMU %d, %d: Received space request from west", coords.x, coords.y);
-                        found = True;
-                        found_index = 2;
-                        send_space[2].enq(tagged Tag_StorageAddr packLocation(next_free_set.Valid, 0, coords.x, coords.y));
-                        next_free_set <= tagged Invalid;
-                    end
-                    3: if (east_has_data) begin
-                        receive_request_space[3].deq;
-                        $display("PMU %d, %d: Received space request from east", coords.x, coords.y);
-                        found = True;
-                        found_index = 3;
-                        send_space[3].enq(tagged Tag_StorageAddr packLocation(next_free_set.Valid, 0, coords.x, coords.y));
-                        next_free_set <= tagged Invalid;
-                    end
-                endcase
+                if (has_data[unpack(idx)]) begin
+                    receive_request_space[idx].deq;
+                    $display("PMU %d, %d: Received space request from %s", coords.x, coords.y, directionIndexToName(unpack(truncate(idx))));
+                    found = True;
+                    found_index = idx;
+                    send_space[idx].enq(tagged Tag_FreeSpaceYes StorageAddr { set: next_free_set.Valid.set, frame: 0, x: coords.x, y: coords.y });
+                    next_free_set <= tagged Invalid;
+                end
             end
         end
         
-        // Only increment counter if we found and processed data
         if (found) begin
             space_round_robin_counter <= (found_index + 1) % 4;
         end 
     endrule
 
+    rule receive_deallocate (initialized);
+        function notEmptyFunc(x) = x.notEmpty;
+        Vector#(4, Bool) has_data = map(notEmptyFunc, receive_send_dealloc);
+        Bool found = False;
+        Bit#(32) found_index = 0;
+        Bit#(32) current = dealloc_round_robin_counter;
+        for (Bit#(32) i = 0; i < 4; i = i + 1) begin
+            let idx = (current + i) % 4;
+            if (!found) begin
+                if (has_data[unpack(idx)]) begin
+                    receive_send_dealloc[idx].deq;
+                    if (receive_send_dealloc[idx].first matches tagged Tag_Deallocate .loc) begin
+                        free_list.freeSet(loc.set);
+                        found = True;
+                        found_index = idx;
+                    end
+                end
+            end
+        end
+        if (found) begin
+            dealloc_round_robin_counter <= (found_index + 1) % 4;
+        end 
+    endrule
+
     rule receive_send_space (initialized && space_request_in_flight);
-        Bool north_has_data = receive_send_space[0].notEmpty;
-        Bool south_has_data = receive_send_space[1].notEmpty;
-        Bool west_has_data = receive_send_space[2].notEmpty;
-        Bool east_has_data = receive_send_space[3].notEmpty;
-
-        let num_responses_received = 0;
-
-        if (north_has_data) begin
-            receive_send_space[0].deq;
-            let {set, frame, x, y} = unpackLocation(receive_send_space[0].first.Tag_StorageAddr);
-            $display("Received space set %d, frame %d, at pmu %d, %d from north", set, frame, coords.x, coords.y);
-            num_responses_received = num_responses_received + 1;
-        end 
-        if (south_has_data) begin
-            receive_send_space[1].deq;
-            let {set, frame, x, y} = unpackLocation(receive_send_space[1].first.Tag_StorageAddr);
-            $display("Received space set %d, frame %d, at pmu %d, %d from south", set, frame, coords.x, coords.y);
-            num_responses_received = num_responses_received + 1;
-        end 
-        if (west_has_data) begin
-            receive_send_space[2].deq;
-            let {set, frame, x, y} = unpackLocation(receive_send_space[2].first.Tag_StorageAddr);
-            $display("Received space set %d, frame %d, at pmu %d, %d from west", set, frame, coords.x, coords.y);
-            num_responses_received = num_responses_received + 1;
-        end 
-        if (east_has_data) begin
-            receive_send_space[3].deq;
-            let {set, frame, x, y} = unpackLocation(receive_send_space[3].first.Tag_StorageAddr);
-            $display("Received space set %d, frame %d, at pmu %d, %d from east", set, frame, coords.x, coords.y);
-            num_responses_received = num_responses_received + 1;
+        function notEmptyFunc(x) = x.notEmpty;
+        Vector#(4, Bool) has_data = map(notEmptyFunc, receive_send_space);
+        
+        Int#(32) num_responses_received = 0;
+        Int#(32) num_yesses = 0;
+        
+        for (Integer i = 0; i < 4; i = i + 1) begin
+            if (has_data[i]) begin
+                receive_send_space[i].deq;
+                num_responses_received = num_responses_received + 1;
+                
+                if (receive_send_space[i].first matches tagged Tag_FreeSpaceYes .loc) begin
+                    if (num_yesses == 0) begin
+                        next_free_set <= tagged Valid loc;
+                    end else begin
+                        send_dealloc[i].enq(tagged Tag_Deallocate loc);
+                    end
+                    num_yesses = num_yesses + 1;
+                end else if (receive_send_space[i].first matches tagged Tag_FreeSpaceNo) begin
+                    $display("Received no from %s", directionIndexToName(fromInteger(i)));
+                end
+            end
         end
 
         if (num_responses_received == num_space_requests_in_flight) begin
             space_request_in_flight <= False;
         end
-
     endrule
 
     rule next_free (initialized && !isValid(next_free_set) && !space_request_in_flight);
@@ -206,7 +225,7 @@ module mkPMU#(
         let mset <- free_list.allocSet();
         case (mset) matches
             tagged Valid .s: begin
-                next_free_set <= tagged Valid s;
+                next_free_set <= tagged Valid StorageAddr { set: s, frame: 0, x: coords.x, y: coords.y };
             end
             default: begin
                 $display("***** Out of memory at PMU %d, %d, load token validity is %d *****", coords.x, coords.y, isValid(load_token));
@@ -238,7 +257,123 @@ module mkPMU#(
         endcase
     endrule
 
-    rule store_tile (initialized && (isValid(next_free_set) || curr_loc.valid) &&& data_in.first matches tagged Tag_Data {.tt, .st});
+    rule receive_send_data_store (initialized);
+        function notEmptyAndStore(x) = x.notEmpty &&& (x.first matches tagged Tag_Store .d ? True : False);
+        Vector#(4, Bool) has_store_data = map(notEmptyAndStore, receive_send_data);
+        Bool found = False;
+        Bit#(32) found_index = 0;
+        Bit#(32) current = receive_send_data_round_robin_counter_store;
+        
+        for (Bit#(32) i = 0; i < 4; i = i + 1) begin
+            let idx = (current + i) % 4;
+            if (!found) begin
+                if (has_store_data[unpack(idx)]) begin
+                    receive_send_data[idx].deq;
+                    $display("RECEIVED STORE DATA SENT FROM NEIGHBOR");
+                    found = True;
+                    found_index = idx;
+                    store_direction <= tagged Valid truncate(idx);
+                    if (receive_send_data[idx].first matches tagged Tag_Store .data_with_next) begin
+                        let data = data_with_next.data;
+                        let loc = data_with_next.loc;
+                        let next = data_with_next.next;
+                        mem.write(loc.set, loc.frame, data);
+                        if (next matches tagged Valid .next_loc) begin
+                            next_table[storageAddrToIndex(loc)] <= tagged Valid next_loc;
+                        end
+                    end
+                end
+            end
+        end
+        
+        if (found) begin
+            receive_send_data_round_robin_counter_store <= (found_index + 1) % 4;
+        end
+    endrule
+
+    rule receive_send_data_load (initialized && data_request_in_flight);
+        // Build the vector manually, checking direction conflicts
+        Vector#(4, Bool) has_load_data = newVector();
+        for (Integer i = 0; i < 4; i = i + 1) begin
+            Bool direction_available = !isValid(store_direction) || (store_direction.Valid != fromInteger(i));
+            has_load_data[i] = direction_available && receive_send_data[i].notEmpty && (receive_send_data[i].first matches tagged Tag_Load .d ? True : False);
+        end
+        Bool found = False;
+        Bit#(32) found_index = 0;
+        Bit#(32) current = receive_send_data_round_robin_counter_load;
+        
+        $display("RECEIVED SEND DATA LOAD FIRED");
+        for (Bit#(32) i = 0; i < 4; i = i + 1) begin
+            let idx = (current + i) % 4;
+            if (!found) begin
+                if (has_load_data[unpack(idx)]) begin
+                    receive_send_data[idx].deq;
+                    $display("RECEIVED LOAD DATA SENT FROM NEIGHBOR");
+                    found = True;
+                    found_index = idx;
+                    if (receive_send_data[idx].first matches tagged Tag_Load .data_with_next) begin
+                        let data = data_with_next.data;
+                        let next = data_with_next.next;
+                        data_request_in_flight <= False;
+                        let out_rank = data.st;
+                        if (!isValid(next)) begin
+                            out_rank = rank + load_token.Valid.st;
+                            load_token <= tagged Invalid;
+                        end else begin
+                            load_token <= tagged Valid LoadState { 
+                                loc: next.Valid, 
+                                deallocate: load_token.Valid.deallocate, 
+                                st: load_token.Valid.st, 
+                                orig_token: load_token.Valid.orig_token 
+                            };
+                        end
+                        $display("ENQUEUING DATA TO OUTPUT IN RECEIVED SEND DATA LOAD");
+                        data_out.enq(tagged Tag_Data tuple2(tagged Tag_Tile data.t, out_rank));
+                    end
+                end
+            end
+        end
+        
+        if (found) begin
+            receive_send_data_round_robin_counter_load <= (found_index + 1) % 4;
+        end
+    endrule
+
+    rule receive_request_data (initialized);
+        function notEmpty(x) = x.notEmpty;
+        Vector#(4, Bool) has_data = map(notEmpty, receive_request_data);
+        Bool found = False;
+        Bit#(32) found_index = 0;
+        Bit#(32) current = receive_request_data_round_robin_counter;
+        for (Bit#(32) i = 0; i < 4; i = i + 1) begin
+            let idx = (current + i) % 4;
+            if (!found) begin
+                if (has_data[unpack(idx)]) begin
+                    receive_request_data[idx].deq;
+                    $display("RECEIVED REQUEST DATA SENT FROM NEIGHBOR");
+                    found = True;
+                    found_index = idx;
+                    if (receive_request_data[idx].first matches tagged Tag_Request_Data .request_storage_addr) begin
+                        let loc = request_storage_addr.loc;
+                        let deallocate = request_storage_addr.deallocate;
+                        let tile = mem.read(loc.set, loc.frame);
+                        let next = next_table[storageAddrToIndex(loc)];
+                        if (deallocate &&& (!isValid(next) || loc.set != next.Valid.set)) begin
+                            free_list.freeSet(loc.set); 
+                        end
+                        $display("ENQUEUING DATA TO SEND TO NEIGHBOR");
+                        send_data[idx].enq(tagged Tag_Load DataWithNext { data: tile, loc: loc, next: next });
+                    end
+                end
+            end
+        end
+        
+        if (found) begin
+            receive_request_data_round_robin_counter <= (found_index + 1) % 4;
+        end
+    endrule
+
+    rule store_tile (initialized && (isValid(next_free_set) || isValid(curr_loc)) &&& data_in.first matches tagged Tag_Data {.tt, .st});
         $display("Fired store_tile");
         data_in.deq;
 
@@ -248,34 +383,63 @@ module mkPMU#(
 
         SET_INDEX set;
         FRAME_INDEX frame; 
-        StorageLocation new_loc;
-        if (!curr_loc.valid) begin
-            set = next_free_set.Valid;
+        Coords new_coords;
+        Maybe#(StorageAddr) new_loc;
+        if (!isValid(curr_loc)) begin
+            set = next_free_set.Valid.set;
             frame = 0;
+            new_coords = Coords { x: next_free_set.Valid.x, y: next_free_set.Valid.y };
             usage_tracker.setFrame(set, 1);
             next_free_set <= tagged Invalid;
-            new_loc = StorageLocation { set: set, frame: 1, valid: True };
+            new_loc = tagged Valid StorageAddr { set: next_free_set.Valid.set, frame: 1, x: next_free_set.Valid.x, y: next_free_set.Valid.y };
         end else begin
-            set = curr_loc.set;
-            frame = curr_loc.frame;
+            set = curr_loc.Valid.set;
+            frame = curr_loc.Valid.frame;
+            new_coords = Coords { x: curr_loc.Valid.x, y: curr_loc.Valid.y };
             let full <- usage_tracker.incFrame(set);
             let is_full = full || emit_token;
-            new_loc = StorageLocation { set: set, frame: frame + 1, valid: !is_full };
+            new_loc = is_full ? tagged Invalid : tagged Valid StorageAddr { set: set, frame: frame + 1, x: curr_loc.Valid.x, y: curr_loc.Valid.y };
         end
-        mem.write(set, frame, TaggedTile { t: tile, st: st });
+        if (new_coords.x != coords.x || new_coords.y != coords.y) begin
+            $display("STORING TO NEIGHBOR");
+            let neighbor_dir = getNeighborDirection(coords, new_coords);
+            send_data[directionToIndex(neighbor_dir)].enq(tagged Tag_Store DataWithNext {data: TaggedTile { t: tile, st: st }, loc: StorageAddr { set: set, frame: frame, x: new_coords.x, y: new_coords.y }, next: new_loc});
+        end else begin 
+            mem.write(set, frame, TaggedTile { t: tile, st: st });
+        end
+        prev_loc <= curr_loc;
         curr_loc <= new_loc;
 
         // update the storage location pointer chain
         if (first_entry.sub(token_counter) matches tagged Invalid) begin
-            let p = packLocation(set, frame, coords.x, coords.y);
+            let p = StorageAddr { set: set, frame: frame, x: new_coords.x, y: new_coords.y };
             first_entry.upd(token_counter, tagged Valid p);
-            next_table[p] <= tagged Invalid;
+            if (new_coords.x == coords.x && new_coords.y == coords.y) begin
+                next_table[storageAddrToIndex(p)] <= tagged Invalid;
+            end
             prev_stored <= p;
         end else begin
-            let p = packLocation(set, frame, coords.x, coords.y);
-            next_table[prev_stored] <= tagged Valid p;
-            if (prev_stored != p) begin
-                next_table[p] <= tagged Invalid;
+            let p = StorageAddr { set: set, frame: frame, x: new_coords.x, y: new_coords.y };
+            Bool prev_is_local = (prev_stored.x == coords.x && prev_stored.y == coords.y);
+            Bool curr_is_local = (new_coords.x == coords.x && new_coords.y == coords.y);
+
+            if (prev_is_local && curr_is_local) begin
+                let prev_index = storageAddrToIndex(prev_stored);
+                let curr_index = storageAddrToIndex(p);
+                if (prev_index != curr_index) begin
+                    next_table[prev_index] <= tagged Valid p;      // prev points to new location
+                    next_table[curr_index] <= tagged Invalid;      // new location has no next
+                end else begin
+                    // Same index (shouldnt happen in practice, but handle it)
+                    next_table[curr_index] <= tagged Invalid; 
+                end
+            end else if (prev_is_local) begin
+                next_table[storageAddrToIndex(prev_stored)] <= tagged Valid p;
+            end else if (curr_is_local) begin
+                next_table[storageAddrToIndex(p)] <= tagged Invalid;
+                $display("Send message to prev_stored pmu to update its next_table[%d] = Valid %d", storageAddrToIndex(prev_stored), storageAddrToIndex(p));
+            end else begin
+                $display("Send message to prev_stored pmu to update its next_table[%d] = Valid %d", storageAddrToIndex(prev_stored), storageAddrToIndex(p));
             end
             prev_stored <= p;
         end
@@ -301,42 +465,58 @@ module mkPMU#(
         end
     endrule
 
-    rule continue_load_tile (initialized &&& load_token matches tagged Valid .load_tk_val &&& !isValid(deallocate_reg));
-        // $display("Fired continue load tile");
-        let loc = load_tk_val.loc;
+    rule continue_load_tile (initialized &&& load_token matches tagged Valid .load_tk_val &&& !isValid(deallocate_reg) &&& !data_request_in_flight);
+        $display("Fired continue load tile");
+        StorageAddr loc = load_tk_val.loc;
         let deallocate = load_tk_val.deallocate;
         let st = load_tk_val.st;
+        $display("Token stop token is %d", st);
         let orig_token = load_tk_val.orig_token;
 
         Bool token_is_complete = token_complete.sub(orig_token);
-        Bool has_next_piece = isValid(next_table[loc]);
+        Bool has_next_piece = isValid(next_table[storageAddrToIndex(loc)]);
 
         if (token_is_complete || has_next_piece) begin
-            let {set, frame, x, y} = unpackLocation(loc);
-            let tile = mem.read(set, frame);
-            let out_rank = tile.st;
+            $display("Token is complete %d or has next piece %d", token_is_complete, has_next_piece);
+            let set = loc.set;
+            let frame = loc.frame;
+            let x = loc.x;
+            let y = loc.y;
+            if (coords.x != x || coords.y != y) begin
+                // TODO: Send off load request to neighbor
+                $display("Need to send load request to neighbor");
+                data_request_in_flight <= True;
+                let request_coords = Coords {x: x, y: y};
+                request_data[directionToIndex(getNeighborDirection(coords, request_coords))].enq(tagged Tag_Request_Data RequestStorageAddr { loc: loc, deallocate: deallocate });
+            end else begin 
+                let tile = mem.read(set, frame);
+                let out_rank = tile.st;
+                $display("Tile stop token is %d", st);
 
-            // Check if weve processed all entries for this token
-            let next_set = set + 1;
-            if (next_table[loc] matches tagged Valid .next_loc) begin
-                let {next_set_unpacked, _, _2, _3} = unpackLocation(next_loc); // used to know if weve read every frame in the set
-                next_set = next_set_unpacked;
-                load_token <= tagged Valid LoadState { loc: next_loc, deallocate: deallocate, st: st, orig_token: orig_token };
-            end else begin
-                load_token <= tagged Invalid;
-                out_rank = rank + st;
-                if (deallocate) begin
-                    deallocate_reg <= tagged Valid truncate(orig_token); // used to reset the token_counter head
+                // Check if weve processed all entries for this token
+                let next_set = set + 1;
+                $display("DEBUG: About to pattern match on next_table[%d]", storageAddrToIndex(loc));
+                if (next_table[storageAddrToIndex(loc)] matches tagged Valid .next_loc) begin
+                    next_set = next_loc.set;
+                    load_token <= tagged Valid LoadState { loc: next_loc, deallocate: deallocate, st: st, orig_token: orig_token };
+                end else begin
+                    $display("DEBUG: Pattern match failed, next_table[%d] = ", storageAddrToIndex(loc), fshow(next_table[storageAddrToIndex(loc)]));
+                    $display("Last element of stream");
+                    load_token <= tagged Invalid;
+                    out_rank = rank + st;
+                    if (deallocate) begin
+                        deallocate_reg <= tagged Valid truncate(orig_token); // used to reset the token_counter head
+                    end
+                end
+                
+                data_out.enq(tagged Tag_Data tuple2(tagged Tag_Tile tile.t, out_rank));
+                if (deallocate && x == coords.x && y == coords.y) begin
+                    if (set != next_set) begin
+                        free_list.freeSet(set); 
+                    end 
                 end
             end
-            
-            data_out.enq(tagged Tag_Data tuple2(tagged Tag_Tile tile.t, out_rank));
 
-            if (deallocate) begin
-                if (set != next_set) begin
-                    free_list.freeSet(set); 
-                end 
-            end
         end
     endrule
 
@@ -344,22 +524,22 @@ module mkPMU#(
     // End Token and Error Rules
     // ============================================================================
 
-    rule store_tile_end_token (initialized &&& data_in.first matches tagged Tag_EndToken .et);
+    rule store_end_token (initialized &&& data_in.first matches tagged Tag_EndToken .et);
         $display("End token received in store");
         token_out.enq(tagged Tag_EndToken et);
     endrule
 
-    rule store_tile_error (initialized &&& data_in.first matches tagged Tag_Instruction .ip);
+    rule store_error (initialized &&& data_in.first matches tagged Tag_Instruction .ip);
         $display("[ERROR]: Instruction received in data input"); // TODO: Should be able to accept incoming config
         $finish(0);
     endrule
 
-    rule start_load_tile_error (initialized &&& token_in.first matches tagged Tag_Instruction .ip);
+    rule start_load_error (initialized &&& token_in.first matches tagged Tag_Instruction .ip);
         $display("[ERROR]: Instruction received in token input");
         $finish(0);
     endrule
 
-    rule start_load_tile_end_token (initialized &&& !isValid(load_token) &&& token_in.first matches tagged Tag_EndToken .et);
+    rule start_load_end_token (initialized &&& !isValid(load_token) &&& !data_request_in_flight &&& token_in.first matches tagged Tag_EndToken .et);
         // Print state of memory at end of stream
         for (Integer i = 0; i < valueOf(SETS); i = i + 1) begin
             if (!free_list.isSetFree(fromInteger(i))) begin

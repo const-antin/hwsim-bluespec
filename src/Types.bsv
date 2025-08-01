@@ -151,7 +151,7 @@ typedef union tagged {
     Tile Tag_Tile;
     Ref Tag_Ref;
     Scalar Tag_Scalar;
-} Data deriving (Bits, FShow);
+} Data deriving (Bits, Eq, FShow);
 
 typedef struct {
     UInt#(16) ptr;
@@ -164,14 +164,15 @@ typedef union tagged {
     EndToken Tag_EndToken;
 } ChannelMessage deriving (Bits, FShow);
 
-typedef struct {
-    SET_INDEX set;
-    FRAME_INDEX frame;
-    Bool valid;
-} StorageLocation deriving(Bits, Eq);
-
 typedef UInt#(TLog#(NUM_PMUS)) CoordType;
-typedef UInt#(TAdd#(TLog#(SETS), TAdd#(TLog#(FRAMES_PER_SET), TAdd#(TLog#(NUM_PMUS), TLog#(NUM_PMUS))))) StorageAddr;
+
+typedef struct {
+    UInt#(TLog#(SETS)) set;
+    UInt#(TLog#(FRAMES_PER_SET)) frame;
+    CoordType x;
+    CoordType y;
+} StorageAddr deriving(Bits, Eq, FShow);
+
 
 typedef struct {
     StorageAddr loc;
@@ -192,12 +193,26 @@ typedef struct {
     CoordType y;
 } Coords deriving(Bits, Eq);
 
+typedef struct {
+    TaggedTile data;
+    StorageAddr loc;
+    Maybe#(StorageAddr) next;
+} DataWithNext deriving(Bits, Eq, FShow);
 
+typedef struct {
+    StorageAddr loc;
+    Bool deallocate;
+} RequestStorageAddr deriving(Bits, Eq, FShow);
 
 typedef union tagged {
-    // TODO: Add message types like deallocate, end token, etc. that i can use to send data around between pmus
-    StorageAddr Tag_StorageAddr;
+    // TODO: Add message types like free space no, free space request, request_data, maybe others?
+    StorageAddr Tag_FreeSpaceYes;
+    void Tag_FreeSpaceNo;
+    DataWithNext Tag_Store;
+    DataWithNext Tag_Load;
     EndToken Tag_EndToken;
+    StorageAddr Tag_Deallocate;
+    RequestStorageAddr Tag_Request_Data;
 } MessageType deriving(Bits, Eq, FShow);
 
 endpackage

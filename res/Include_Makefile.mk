@@ -16,8 +16,9 @@ endif
 
 TOPFILE ?= src/Top.$(SRC_EXT)
 TOPMODULE ?= mkTop
+NPROC := $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 
-BSC_COMP_FLAGS += -keep-fires -aggressive-conditions -no-warn-action-shadowing -check-assert -cpp \
+BSC_COMP_FLAGS += -keep-fires -aggressive-conditions -no-warn-action-shadowing -check-assert -parallel-sim-link $(NPROC) -cpp \
 	+RTS -K2G -RTS -show-range-conflict -show-schedule -Xc "lm" -steps-max-intervals 10000000 -v -show-stats -sched-dot
 
 BSC_LINK_FLAGS += -keep-fires -Xc "lm" -show-stats
