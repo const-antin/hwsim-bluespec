@@ -211,6 +211,14 @@ module mkPCU(PCU_IFC);
     // Transition: Configuring -> Idle
     rule config_to_idle if (state matches tagged Tag_Computing {.instruction_idx, .instruction} &&& map(isValid, instruction.pcu_config.input_ports) == done_inputs &&& map(isValid, instruction.pcu_config.output_ports) == done_outputs);
         // $display("Configuring to Idle because selected inputs is %s and done inputs is %s and selected outputs is %s and done outputs is %s", fshow(map(isValid, instruction.input_ports)), fshow(done_inputs), fshow(map(isValid, instruction.output_ports)), fshow(done_outputs));
+        
+        // For each output, if done_outputs[i] is True, enqueue an end token
+        for (Integer i = 0; i < fromInteger(valueOf(NUM_OUTPUTS_PER_PCU)); i = i + 1) begin
+            if (done_outputs[i]) begin
+                external_outputs[i].enq(tagged Tag_EndToken);
+            end
+        end
+
         state <= tagged Tag_Idle;
         done_inputs <= replicate(False);
         done_outputs <= replicate(False);
