@@ -1,107 +1,79 @@
-# Bluespec Counter Project
-
-This is a classic Bluespec SystemVerilog (BSV) project that demonstrates:
-- Module design with interfaces
-- Testbench creation
-- Verilog generation
-- Simulation and testing
-
-## Project Structure
-
-```
-hwsim-bluespec/
-├── Makefile          # Build configuration
-├── README.md         # This file
-└── src/
-    └── Top.bsv       # Main program with counter and test
-```
+# HWSIM Bluespec
 
 ## Prerequisites
 
-You need to have Bluespec SystemVerilog (BSV) compiler installed. You can download it from:
-- [Bluespec Inc.](https://www.bluespec.com/) (commercial)
-- [Bluespec SystemVerilog](https://github.com/B-Lang-org/bsc) (open source)
+- Bluespec SystemVerilog (BSV) compiler
+- C++ compiler (for DPI components)
+- CMake (for Ramulator2 build)
 
-## Building and Running
+## Building
 
-### Bluesim Simulation (Recommended)
+1. **Build Ramulator2** (required for memory simulation):
+   ```bash
+   cd ramulator2
+   mkdir build && cd build
+   cmake ..
+   make -j$(nproc)
+   cd ../..
+   ```
+## Running Tests
+
+### Run All Tests
+
+To run all available tests:
+
 ```bash
-make b_all
-```
-This will compile, link, and run the simulation using Bluesim.
-
-### Generate Verilog
-```bash
-make v_compile
-```
-This will generate Verilog files in the `verilog_RTL/` directory.
-
-### Run Verilog Simulation
-```bash
-make v_all
-```
-This will compile, link, and run the simulation using a Verilog simulator.
-
-### Clean Build Artifacts
-```bash
-make clean
+make auto_tests
 ```
 
-### Show Help
+This will:
+- Automatically discover all test modules in the codebase
+- Run each test with a 4-minute timeout
+- Generate output files in `test_results/` directory
+- Report pass/fail status for each test
+
+### Run Specific Tests
+
+To run a specific test module:
+
 ```bash
-make help
+make b_all TOPFILE=test/ReconfigurabilityTest.bsv TOPMODULE=mkReconfigurabilityTest
+make b_all TOPFILE=test/ArbiterStressTest.bsv TOPMODULE=mkArbiterStressTest
+make b_all TOPFILE=test/AccumBigTileTest.bsv TOPMODULE=mkAccumBigTileTest
 ```
 
-## Available Make Targets
+### Test Output
 
-- `b_compile` - Compile for Bluesim
-- `b_link` - Link a Bluesim executable
-- `b_sim` - Run the Bluesim simulation
-- `b_all` - Complete Bluesim workflow (compile + link + simulate)
-- `v_compile` - Compile for Verilog generation
-- `v_link` - Link a Verilog simulation executable
-- `v_sim` - Run the Verilog simulation
-- `v_all` - Complete Verilog workflow (compile + link + simulate)
-- `clean` - Remove build artifacts
-- `help` - Show this help information
+Test results are stored in the `test_results/` directory:
+- `{ModuleName}.out`: Standard output from the test
+- `{ModuleName}.err`: Error output from the test
 
-## Module Description
 
-### Top Module (`src/Top.bsv`)
-Contains:
-1. **Counter Interface**: Defines the API for the counter module
-2. **Counter Implementation**: A simple 8-bit counter with increment, reset, and getValue methods
-3. **Test Sequence**: Comprehensive testbench that verifies:
-   - Initial value is 0
-   - Increment functionality
-   - Reset functionality
-   - Overflow behavior (255 + 1 = 0)
+## Configuration
 
-## Generated Files
+The system can be configured through various parameters defined in `src/Parameters.bsv`:
+- Number of PCUs
+- Input/output port counts
+- Memory system parameters
+- Interconnect configuration
 
-After running `make v_compile`, you'll find:
-- `verilog_RTL/mkTop.v` - Verilog for the top module
-- `build_v/` - Build artifacts
-- `build_b_sim/` - Bluesim build artifacts
+## Memory System Integration
 
-## Bluespec Features Demonstrated
-
-1. **Interfaces**: The `Counter_IFC` interface defines the module's API
-2. **Registers**: Using `mkReg` for state storage
-3. **Methods**: Action methods for side effects, value methods for reading
-4. **FSM**: Using `StmtFSM` for test sequence control
-5. **Packages**: Proper package organization
-
-## Extending the Project
-
-To add new modules:
-1. Create new modules in `src/Top.bsv` or create separate `.bsv` files
-2. Update the `TOPMODULE` variable in the Makefile if needed
-3. Add new test sequences as needed
+The project integrates with Ramulator2 for realistic memory system simulation:
+- Supports various DRAM standards (DDR4, DDR5, HBM, etc.)
+- Configurable memory controllers and schedulers
+- Performance analysis and trace recording
 
 ## Troubleshooting
 
-- If `bsc` command is not found, ensure Bluespec is properly installed and in your PATH
-- If compilation fails, check that all imports are correct
-- For simulation issues, ensure all dependencies are satisfied
-- For Verilog simulation, ensure you have a Verilog simulator installed (iverilog, vcs, etc.) 
+### Common Issues
+
+1. **Build failures**: Ensure Ramulator2 is built first
+2. **Test timeouts**: Increase timeout in `run_tests.sh` if needed
+
+## Contributing
+
+When adding new tests:
+1. Create a new BSV file in the `test/` directory
+2. Define a module with `Empty` interface
+3. The test will be automatically discovered by `run_tests.sh`
