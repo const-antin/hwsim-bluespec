@@ -22,3 +22,8 @@ BSC_LINK_FLAGS += -Xl "-L./ramulator2" \
 		-Xc++ "-I./ramulator2/src"
 
 include ./res/Include_Makefile.mk
+
+.PHONY: auto_tests
+
+auto_tests:
+	./run_tests.sh

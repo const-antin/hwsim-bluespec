@@ -4,3 +4,4 @@ ramulator2/libramulator.dylib
 build/
 .DS_Store
 .vscode/
+test_results/
