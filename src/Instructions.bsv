@@ -134,14 +134,8 @@ typedef struct {
 
 } PMUInstruction deriving (Bits, Eq, FShow);
 
-// Type definitions matching the Rust implementation
 typedef UInt#(TLog#(TMax#(NUM_PCUS, NUM_PMUS))) ComponentIdx;
 
-// Reserved instruction indices
-// OUTPUT_INSTRUCTION = 0;
-// INPUT_INSTRUCTION = 0;
-
-// Component target mapping
 typedef struct {
     Vector#(TMax#(NUM_OUTPUTS_PER_PCU, NUM_OUTPUTS_PER_PMU), Maybe#(Instruction_Ptr)) port_mappings;
 } ComponentTarget deriving (Bits, Eq, FShow);
