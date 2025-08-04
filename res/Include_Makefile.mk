@@ -22,7 +22,7 @@ NPROC := $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 # ================================================================
 
 # FASTEST MODE (for rapid iteration)
-BSC_COMP_FLAGS_FASTEST = -aggressive-conditions -no-warn-action-shadowing \
+BSC_COMP_FLAGS_FASTEST = -aggressive-conditions -no-warn-action-shadowing -show-range-conflict \
 	-parallel-sim-link $(NPROC) -cpp +RTS -K2G -RTS -Xc "lm" \
 	-steps-max-intervals 10000000
 

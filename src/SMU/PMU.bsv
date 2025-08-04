@@ -47,7 +47,9 @@ module mkPMU#(
     Vector#(4, FIFOF#(MessageType)) send_space,
     Vector#(4, FIFOF#(MessageType)) receive_send_space,
     Vector#(4, FIFOF#(MessageType)) send_dealloc,
-    Vector#(4, FIFOF#(MessageType)) receive_send_dealloc
+    Vector#(4, FIFOF#(MessageType)) receive_send_dealloc,
+    Vector#(4, FIFOF#(MessageType)) send_update_pointer,
+    Vector#(4, FIFOF#(MessageType)) receive_send_update_pointer
 )(PMU_IFC);
     // ============================================================================
     // Internal state
@@ -83,22 +85,22 @@ module mkPMU#(
     ConfigReg#(Maybe#(LoadState)) load_token <- mkConfigReg(tagged Invalid);
     ConfigReg#(Maybe#(Bit#(TLog#(MAX_ENTRIES)))) deallocate_reg <- mkConfigReg(tagged Invalid);
 
-    // Round robin counter for space requests
-    Reg#(Bit#(32)) space_round_robin_counter <- mkReg(0);
+    // In flight trackers
     Reg#(Bool) space_request_in_flight <- mkReg(False);
     Reg#(Int#(32)) num_space_requests_in_flight <- mkReg(0);
+    Reg#(Bool) data_request_in_flight <- mkReg(False);
 
-    // Round robin counter for deallocate requests
+    // Round robin counters
+    Reg#(Bit#(32)) space_round_robin_counter <- mkReg(0);
     Reg#(Bit#(32)) dealloc_round_robin_counter <- mkReg(0);
-
-    // Round robin counter for store_data requests
     Reg#(Bit#(32)) receive_send_data_round_robin_counter_store <- mkReg(0);
     Reg#(Bit#(32)) receive_send_data_round_robin_counter_load <- mkReg(0);
     Reg#(Bit#(32)) receive_request_data_round_robin_counter <- mkReg(0);
-
-    Reg#(Bool) data_request_in_flight <- mkReg(False);
+    Reg#(Bit#(32)) receive_send_update_pointer_round_robin_counter <- mkReg(0);
 
     Wire#(Maybe#(Bit#(2))) store_direction <- mkDWire(tagged Invalid);
+
+    ConfigReg#(Bit#(32)) num_stored_to_current_frame <- mkConfigReg(0);
 
     // ============================================================================
     // Rule Orderings
@@ -106,17 +108,14 @@ module mkPMU#(
 
     (* execution_order = "cycle_counter, round_robin_space_request, receive_send_space, store_tile, next_free, continue_load_tile" *)
     (* execution_order = "cycle_counter, start_load_tile, receive_send_data" *)
-    (* execution_order = "receive_deallocate, next_free, continue_load_tile" *)
-    (* execution_order = "receive_request_data, next_free" *)
-    (* execution_order = "receive_deallocate, receive_request_data" *)
-    (* execution_order = "receive_request_data, continue_load_tile" *)
+    (* execution_order = "receive_deallocate, receive_request_data, next_free, continue_load_tile" *)
+    (* execution_order = "receive_send_update_pointer, receive_send_data" *)
+    (* execution_order = "receive_send_update_pointer, store_tile" *)
     (* descending_urgency = "deallocate_token, store_tile, round_robin_space_request" *)
     (* descending_urgency = "store_tile, receive_send_data" *)
     (* descending_urgency = "store_tile, receive_request_data" *)
     (* conflict_free = "receive_send_data, start_load_end_token" *)
     (* conflict_free = "receive_send_data, continue_load_tile" *)
-
-    // (* mutually_exclusive = "receive_send_data_load, continue_load_tile" *)
 
     // ============================================================================
     // Main Logic Rules
@@ -140,7 +139,19 @@ module mkPMU#(
         end
     endrule
 
-    rule round_robin_space_request (initialized &&& isValid(next_free_set));
+    rule space_request_no_2 (initialized &&& isValid(next_free_set) &&& (next_free_set.Valid.x != coords.x || next_free_set.Valid.y != coords.y));
+        function notEmptyFunc(x) = tpl_1(x).notEmpty && tpl_2(x).notFull; 
+        Vector#(4, Bool) has_data = map(notEmptyFunc, zip(receive_request_space, send_space));
+        
+        for (Bit#(32) i = 0; i < 4; i = i + 1) begin
+            if (has_data[i]) begin
+                receive_request_space[i].deq;
+                send_space[i].enq(tagged Tag_FreeSpaceNo);
+            end
+        end
+    endrule
+
+    rule round_robin_space_request (initialized &&& isValid(next_free_set) &&& next_free_set.Valid.x == coords.x &&& next_free_set.Valid.y == coords.y);
         function notEmptyFunc(x) = tpl_1(x).notEmpty && tpl_2(x).notFull; 
         Vector#(4, Bool) has_data = map(notEmptyFunc, zip(receive_request_space, send_space));
         
@@ -207,6 +218,7 @@ module mkPMU#(
                 if (receive_send_space[i].first matches tagged Tag_FreeSpaceYes .loc) begin
                     if (num_yesses == 0) begin
                         next_free_set <= tagged Valid loc;
+                        $display("Received space from %s at location (pmu %d, %d, set %d, frame %d)", directionIndexToName(fromInteger(i)), loc.x, loc.y, loc.set, loc.frame);
                     end else begin
                         send_dealloc[i].enq(tagged Tag_Deallocate loc);
                     end
@@ -275,7 +287,7 @@ module mkPMU#(
             if (!found) begin
                 if (has_store_data[unpack(idx)]) begin
                     receive_send_data[idx].deq;
-                    $display("RECEIVED STORE DATA SENT FROM NEIGHBOR");
+                    $display("RECEIVED STORE DATA AT PMU %d, %d SENT FROM %s", coords.x, coords.y, directionIndexToName(unpack(truncate(idx))));
                     found = True;
                     found_index = idx;
                     if (receive_send_data[idx].first matches tagged Tag_Store .data_with_next) begin
@@ -307,7 +319,7 @@ module mkPMU#(
             if (!found) begin
                 if (has_load_data[unpack(idx)]) begin
                     receive_send_data[idx].deq;
-                    $display("RECEIVED LOAD DATA SENT FROM NEIGHBOR");
+                    $display("RECEIVED LOAD DATA AT PMU %d, %d SENT FROM %s", coords.x, coords.y, directionIndexToName(unpack(truncate(idx))));
                     found = True;
                     found_index = idx;
                     if (receive_send_data[idx].first matches tagged Tag_Load .data_with_next) begin
@@ -349,7 +361,7 @@ module mkPMU#(
             if (!found) begin
                 if (has_data[unpack(idx)]) begin
                     receive_request_data[idx].deq;
-                    $display("RECEIVED REQUEST DATA SENT FROM NEIGHBOR");
+                    $display("RECEIVED REQUEST DATA AT PMU %d, %d SENT FROM %s", coords.x, coords.y, directionIndexToName(unpack(truncate(idx))));
                     found = True;
                     found_index = idx;
                     if (receive_request_data[idx].first matches tagged Tag_Request_Data .request_storage_addr) begin
@@ -372,6 +384,33 @@ module mkPMU#(
         end
     endrule
 
+    rule receive_send_update_pointer (initialized);
+        function notEmpty(x) = x.notEmpty;
+        Vector#(4, Bool) has_data = map(notEmpty, receive_send_update_pointer);
+        Bool found = False;
+        Bit#(32) found_index = 0;
+        Bit#(32) current = receive_send_update_pointer_round_robin_counter;
+        for (Bit#(32) i = 0; i < 4; i = i + 1) begin
+            let idx = (current + i) % 4;
+            if (!found) begin
+                if (has_data[unpack(idx)]) begin
+                    receive_send_update_pointer[idx].deq;
+                    $display("RECEIVED UPDATE POINTER AT PMU %d, %d SENT FROM %s", coords.x, coords.y, directionIndexToName(unpack(truncate(idx))));
+                    if (receive_send_update_pointer[idx].first matches tagged Tag_Update_Next_Table .prev_to_next) begin
+                        let prev = prev_to_next.prev;
+                        let next = prev_to_next.next;
+                        next_table[storageAddrToIndex(prev)] <= tagged Valid next;
+                        found = True;
+                        found_index = idx;
+                    end
+                end
+            end
+        end
+        if (found) begin
+            receive_send_update_pointer_round_robin_counter <= (found_index + 1) % 4;
+        end
+    endrule
+
     rule store_tile (initialized && (isValid(next_free_set) || isValid(curr_loc)) &&& data_in.first matches tagged Tag_Data {.tt, .st});
         $display("Fired store_tile");
         data_in.deq;
@@ -388,19 +427,26 @@ module mkPMU#(
             set = next_free_set.Valid.set;
             frame = 0;
             new_coords = Coords { x: next_free_set.Valid.x, y: next_free_set.Valid.y };
-            usage_tracker.setFrame(set, 1);
+            if (new_coords == coords) begin
+                usage_tracker.setFrame(set, 1);
+            end
+            num_stored_to_current_frame <= 1;
             next_free_set <= tagged Invalid;
             new_loc = tagged Valid StorageAddr { set: next_free_set.Valid.set, frame: 1, x: next_free_set.Valid.x, y: next_free_set.Valid.y };
         end else begin
             set = curr_loc.Valid.set;
             frame = curr_loc.Valid.frame;
             new_coords = Coords { x: curr_loc.Valid.x, y: curr_loc.Valid.y };
-            let full <- usage_tracker.incFrame(set);
+            if (new_coords == coords) begin
+                usage_tracker.incFrame(set);
+            end
+            let full = num_stored_to_current_frame == fromInteger(valueOf(FRAMES_PER_SET) - 1);
+            num_stored_to_current_frame <= num_stored_to_current_frame + 1;
             let is_full = full || emit_token;
             new_loc = is_full ? tagged Invalid : tagged Valid StorageAddr { set: set, frame: frame + 1, x: curr_loc.Valid.x, y: curr_loc.Valid.y };
         end
         if (new_coords.x != coords.x || new_coords.y != coords.y) begin
-            $display("STORING TO NEIGHBOR");
+            $display("STORING TO NEIGHBOR %s at location (pmu %d, %d, set %d, frame %d)", directionIndexToName(directionToIndex(getNeighborDirection(coords, new_coords))), new_coords.x, new_coords.y, set, frame);
             let neighbor_dir = getNeighborDirection(coords, new_coords);
             send_data[directionToIndex(neighbor_dir)].enq(tagged Tag_Store DataWithNext {data: TaggedTile { t: tile, st: st }, loc: StorageAddr { set: set, frame: frame, x: new_coords.x, y: new_coords.y }, next: new_loc});
         end else begin 
@@ -436,10 +482,13 @@ module mkPMU#(
                 next_table[storageAddrToIndex(prev_stored)] <= tagged Valid p;
             end else if (curr_is_local) begin
                 next_table[storageAddrToIndex(p)] <= tagged Invalid;
-                $display("Send message to prev_stored pmu to update its next_table[%d] = Valid %d", storageAddrToIndex(prev_stored), storageAddrToIndex(p));
-            end else begin
-                $display("Send message to prev_stored pmu to update its next_table[%d] = Valid %d", storageAddrToIndex(prev_stored), storageAddrToIndex(p));
             end
+
+            // update pointer chain
+            if (!prev_is_local && prev_stored.frame == fromInteger(valueOf(FRAMES_PER_SET) - 1)) begin
+                $display("Send message to prev_stored pmu %d, %d, set %d, frame %d to update its next_table to be (pmu %d, %d, set %d, frame %d)", prev_stored.x, prev_stored.y, prev_stored.set, prev_stored.frame, p.x, p.y, p.set, p.frame);
+                send_update_pointer[directionToIndex(getNeighborDirection(coords, Coords { x: prev_stored.x, y: prev_stored.y }))].enq(tagged Tag_Update_Next_Table PrevToNextTag { prev: prev_stored, next: p });
+            end 
             prev_stored <= p;
         end
 

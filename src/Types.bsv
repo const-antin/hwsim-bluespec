@@ -6,7 +6,7 @@ import Vector::*;
 typedef Int#(32) StopToken;
 typedef Int#(32) Scalar;
 
-typedef 16 TILE_SIZE;
+typedef 4 TILE_SIZE;
 typedef TMul#(TILE_SIZE, TILE_SIZE) TILE_SIZE_SQUARE;
 typedef Bit#(TMul#(TILE_SIZE, TMul#(TILE_SIZE, SizeOf#(Scalar)))) Tile;
 
@@ -204,6 +204,11 @@ typedef struct {
     Bool deallocate;
 } RequestStorageAddr deriving(Bits, Eq, FShow);
 
+typedef struct {
+    StorageAddr prev;
+    StorageAddr next;
+} PrevToNextTag deriving(Bits, Eq, FShow);
+
 typedef union tagged {
     // TODO: Add message types like free space no, free space request, request_data, maybe others?
     StorageAddr Tag_FreeSpaceYes;
@@ -213,6 +218,7 @@ typedef union tagged {
     EndToken Tag_EndToken;
     StorageAddr Tag_Deallocate;
     RequestStorageAddr Tag_Request_Data;
+    PrevToNextTag Tag_Update_Next_Table;
 } MessageType deriving(Bits, Eq, FShow);
 
 endpackage

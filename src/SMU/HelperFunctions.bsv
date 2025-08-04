@@ -35,8 +35,8 @@ function Direction indexToDirection(UInt#(2) index);
     case (index) matches
         0: return North;
         1: return South;
-        2: return East;
-        3: return West;
+        2: return West;
+        3: return East;
         default: return North; // Should never happen with 2-bit index
     endcase
 endfunction

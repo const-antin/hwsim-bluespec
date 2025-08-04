@@ -11,7 +11,7 @@ import Operation::*;        // Added for the new test
 // import YourRepeatPackage::*;  // Uncomment and specify the correct package for mkRepeatStatic
 
 // Existing test parameters
-typedef 10 NUM_TEST_VALUES;
+typedef 40 NUM_TEST_VALUES;
 typedef 1 RANK;
 
 // New test parameters  
@@ -226,6 +226,8 @@ module mkTestPMUGrid(Empty);
     Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) sn_send_space <- replicateM(replicateM(mkGFIFOF(False, False)));
     Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) ns_send_dealloc <- replicateM(replicateM(mkGFIFOF(False, True)));
     Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) sn_send_dealloc <- replicateM(replicateM(mkGFIFOF(False, True)));
+    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) ns_send_update_pointer <- replicateM(replicateM(mkGFIFOF(False, True)));
+    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) sn_send_update_pointer <- replicateM(replicateM(mkGFIFOF(False, True)));
 
     Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) ew_request_data <- replicateM(replicateM(mkGFIFOF(False, False)));
     Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) we_request_data <- replicateM(replicateM(mkGFIFOF(False, False)));
@@ -237,7 +239,8 @@ module mkTestPMUGrid(Empty);
     Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) we_send_space <- replicateM(replicateM(mkGFIFOF(False, False)));
     Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) ew_send_dealloc <- replicateM(replicateM(mkGFIFOF(False, True)));
     Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) we_send_dealloc <- replicateM(replicateM(mkGFIFOF(False, True)));
-
+    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) ew_send_update_pointer <- replicateM(replicateM(mkGFIFOF(False, True)));
+    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) we_send_update_pointer <- replicateM(replicateM(mkGFIFOF(False, True)));
     // Instantiate the PMUs
     Vector#(NUM_PMUS, Vector#(NUM_PMUS, PMU_IFC)) pmus;
 
@@ -305,9 +308,21 @@ module mkTestPMUGrid(Empty);
             receive_send_dealloc[2] = we_send_dealloc[i][j];
             receive_send_dealloc[3] = ew_send_dealloc[i][j + 1];
 
+            Vector#(4, FIFOF#(MessageType)) send_update_pointer = newVector();
+            send_update_pointer[0] = sn_send_update_pointer[i][j];
+            send_update_pointer[1] = ns_send_update_pointer[i + 1][j];
+            send_update_pointer[2] = ew_send_update_pointer[i][j];
+            send_update_pointer[3] = we_send_update_pointer[i][j + 1];
+
+            Vector#(4, FIFOF#(MessageType)) receive_send_update_pointer = newVector();
+            receive_send_update_pointer[0] = ns_send_update_pointer[i][j];
+            receive_send_update_pointer[1] = sn_send_update_pointer[i + 1][j];
+            receive_send_update_pointer[2] = we_send_update_pointer[i][j];
+            receive_send_update_pointer[3] = ew_send_update_pointer[i][j + 1];
+
             pmus[i][j] <- mkPMU(
                 fromInteger(valueOf(RANK)), // rank  
-                Coords { x: fromInteger(i), y: fromInteger(j) }, // coords
+                Coords { x: fromInteger(j), y: fromInteger(i) }, // coords
                 request_data,
                 receive_request_data,
                 send_data,
@@ -317,7 +332,9 @@ module mkTestPMUGrid(Empty);
                 send_space,
                 receive_send_space,
                 send_dealloc,
-                receive_send_dealloc
+                receive_send_dealloc,
+                send_update_pointer,
+                receive_send_update_pointer
             );
         end
     end
