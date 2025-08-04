@@ -105,14 +105,16 @@ module mkPMU#(
     // ============================================================================
 
     (* execution_order = "cycle_counter, round_robin_space_request, receive_send_space, store_tile, next_free, continue_load_tile" *)
-    (* execution_order = "cycle_counter, start_load_tile, receive_send_data_load" *)
+    (* execution_order = "cycle_counter, start_load_tile, receive_send_data" *)
     (* execution_order = "receive_deallocate, next_free, continue_load_tile" *)
     (* execution_order = "receive_request_data, next_free" *)
     (* execution_order = "receive_deallocate, receive_request_data" *)
     (* execution_order = "receive_request_data, continue_load_tile" *)
     (* descending_urgency = "deallocate_token, store_tile, round_robin_space_request" *)
-    (* descending_urgency = "store_tile, receive_send_data_store" *)
+    (* descending_urgency = "store_tile, receive_send_data" *)
     (* descending_urgency = "store_tile, receive_request_data" *)
+    (* conflict_free = "receive_send_data, start_load_end_token" *)
+    (* conflict_free = "receive_send_data, continue_load_tile" *)
 
     // (* mutually_exclusive = "receive_send_data_load, continue_load_tile" *)
 
@@ -257,9 +259,13 @@ module mkPMU#(
         endcase
     endrule
 
-    rule receive_send_data_store (initialized);
+    rule receive_send_data (initialized);
         function notEmptyAndStore(x) = x.notEmpty &&& (x.first matches tagged Tag_Store .d ? True : False);
         Vector#(4, Bool) has_store_data = map(notEmptyAndStore, receive_send_data);
+        function notEmptyAndLoad(x) = data_request_in_flight &&& x.fst.notEmpty &&& (x.fst.first matches tagged Tag_Load .d ? True : False) &&& !x.snd;
+        Vector#(4, Tuple2#(FIFOF#(MessageType), Bool)) paired_data = zip(receive_send_data, has_store_data);
+        Vector#(4, Bool) has_load_data = map(notEmptyAndLoad, paired_data);
+
         Bool found = False;
         Bit#(32) found_index = 0;
         Bit#(32) current = receive_send_data_round_robin_counter_store;
@@ -272,15 +278,16 @@ module mkPMU#(
                     $display("RECEIVED STORE DATA SENT FROM NEIGHBOR");
                     found = True;
                     found_index = idx;
-                    store_direction <= tagged Valid truncate(idx);
                     if (receive_send_data[idx].first matches tagged Tag_Store .data_with_next) begin
                         let data = data_with_next.data;
                         let loc = data_with_next.loc;
                         let next = data_with_next.next;
                         mem.write(loc.set, loc.frame, data);
-                        if (next matches tagged Valid .next_loc) begin
-                            next_table[storageAddrToIndex(loc)] <= tagged Valid next_loc;
+                        if (loc.frame > 0) begin
+                            let old_loc = StorageAddr { set: loc.set, frame: loc.frame - 1, x: loc.x, y: loc.y };
+                            next_table[storageAddrToIndex(old_loc)] <= tagged Valid loc;
                         end
+                        next_table[storageAddrToIndex(loc)] <= tagged Invalid;
                     end
                 end
             end
@@ -289,20 +296,12 @@ module mkPMU#(
         if (found) begin
             receive_send_data_round_robin_counter_store <= (found_index + 1) % 4;
         end
-    endrule
 
-    rule receive_send_data_load (initialized && data_request_in_flight);
-        // Build the vector manually, checking direction conflicts
-        Vector#(4, Bool) has_load_data = newVector();
-        for (Integer i = 0; i < 4; i = i + 1) begin
-            Bool direction_available = !isValid(store_direction) || (store_direction.Valid != fromInteger(i));
-            has_load_data[i] = direction_available && receive_send_data[i].notEmpty && (receive_send_data[i].first matches tagged Tag_Load .d ? True : False);
-        end
-        Bool found = False;
-        Bit#(32) found_index = 0;
-        Bit#(32) current = receive_send_data_round_robin_counter_load;
+        // $display("RECEIVED SEND DATA LOAD FIRED");
+        found = False;
+        found_index = 0;
+        current = receive_send_data_round_robin_counter_load;
         
-        $display("RECEIVED SEND DATA LOAD FIRED");
         for (Bit#(32) i = 0; i < 4; i = i + 1) begin
             let idx = (current + i) % 4;
             if (!found) begin
@@ -453,7 +452,7 @@ module mkPMU#(
     endrule
 
     rule start_load_tile (initialized &&& !isValid(load_token) &&& token_in.first matches tagged Tag_Data {.tt, .st});
-        // $display("Fired start load tile");
+        $display("Fired start load tile");
         token_in.deq;
         let token_input = unwrapRef(tt);
         let maybe_packed_loc = first_entry.sub(truncate(token_input.fst));
@@ -495,12 +494,10 @@ module mkPMU#(
 
                 // Check if weve processed all entries for this token
                 let next_set = set + 1;
-                $display("DEBUG: About to pattern match on next_table[%d]", storageAddrToIndex(loc));
                 if (next_table[storageAddrToIndex(loc)] matches tagged Valid .next_loc) begin
                     next_set = next_loc.set;
                     load_token <= tagged Valid LoadState { loc: next_loc, deallocate: deallocate, st: st, orig_token: orig_token };
                 end else begin
-                    $display("DEBUG: Pattern match failed, next_table[%d] = ", storageAddrToIndex(loc), fshow(next_table[storageAddrToIndex(loc)]));
                     $display("Last element of stream");
                     load_token <= tagged Invalid;
                     out_rank = rank + st;
@@ -526,6 +523,7 @@ module mkPMU#(
 
     rule store_end_token (initialized &&& data_in.first matches tagged Tag_EndToken .et);
         $display("End token received in store");
+        data_in.deq;
         token_out.enq(tagged Tag_EndToken et);
     endrule
 
@@ -540,6 +538,8 @@ module mkPMU#(
     endrule
 
     rule start_load_end_token (initialized &&& !isValid(load_token) &&& !data_request_in_flight &&& token_in.first matches tagged Tag_EndToken .et);
+        $display("End token received in start load");
+        token_in.deq;
         // Print state of memory at end of stream
         for (Integer i = 0; i < valueOf(SETS); i = i + 1) begin
             if (!free_list.isSetFree(fromInteger(i))) begin

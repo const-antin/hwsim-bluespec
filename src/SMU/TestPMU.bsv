@@ -11,7 +11,7 @@ import Operation::*;        // Added for the new test
 // import YourRepeatPackage::*;  // Uncomment and specify the correct package for mkRepeatStatic
 
 // Existing test parameters
-typedef 9 NUM_TEST_VALUES;
+typedef 10 NUM_TEST_VALUES;
 typedef 1 RANK;
 
 // New test parameters  
@@ -218,8 +218,8 @@ module mkTestPMUGrid(Empty);
     // Create shared FIFOs for the mesh
     Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) ns_request_data <- replicateM(replicateM(mkGFIFOF(False, False)));
     Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) sn_request_data <- replicateM(replicateM(mkGFIFOF(False, False)));
-    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) ns_send_data <- replicateM(replicateM(mkGFIFOF(False, False)));
-    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) sn_send_data <- replicateM(replicateM(mkGFIFOF(False, False)));
+    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) ns_send_data <- replicateM(replicateM(mkGFIFOF(False, True)));
+    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) sn_send_data <- replicateM(replicateM(mkGFIFOF(False, True)));
     Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) ns_request_space <- replicateM(replicateM(mkGFIFOF(True, True)));
     Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) sn_request_space <- replicateM(replicateM(mkGFIFOF(True, True)));
     Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) ns_send_space <- replicateM(replicateM(mkGFIFOF(False, False)));
@@ -229,8 +229,8 @@ module mkTestPMUGrid(Empty);
 
     Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) ew_request_data <- replicateM(replicateM(mkGFIFOF(False, False)));
     Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) we_request_data <- replicateM(replicateM(mkGFIFOF(False, False)));
-    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) ew_send_data <- replicateM(replicateM(mkGFIFOF(False, False)));
-    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) we_send_data <- replicateM(replicateM(mkGFIFOF(False, False)));
+    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) ew_send_data <- replicateM(replicateM(mkGFIFOF(False, True)));
+    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) we_send_data <- replicateM(replicateM(mkGFIFOF(False, True)));
     Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) ew_request_space <- replicateM(replicateM(mkGFIFOF(True, True)));
     Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) we_request_space <- replicateM(replicateM(mkGFIFOF(True, True)));
     Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) ew_send_space <- replicateM(replicateM(mkGFIFOF(False, False)));
@@ -325,7 +325,10 @@ module mkTestPMUGrid(Empty);
     function TaggedTile testValues(Bit#(TLog#(TAdd#(NUM_TEST_VALUES, 2))) i);
         Vector#(TILE_SIZE, Vector#(TILE_SIZE, Scalar)) mat = replicate(replicate(0));
         StopToken token = 0;
-        if (i == fromInteger(valueOf(NUM_TEST_VALUES) / 2 - 1)) begin
+        // if (i == fromInteger(valueOf(NUM_TEST_VALUES) / 2 - 1)) begin
+        //     token = 1;
+        // end
+        if (i == 3) begin
             token = 1;
         end
         if (i == fromInteger(valueOf(NUM_TEST_VALUES) - 1)) begin
@@ -351,12 +354,12 @@ module mkTestPMUGrid(Empty);
     // === Put values ===
     rule driveInput (initialized);
         if (putIndex < fromInteger(valueOf(NUM_TEST_VALUES))) begin 
-            pmus[1][2].put_data(tagged Tag_Data tuple2(tagged Tag_Tile testValues(putIndex).t, testValues(putIndex).st));
+            pmus[1][1].put_data(tagged Tag_Data tuple2(tagged Tag_Tile testValues(putIndex).t, testValues(putIndex).st));
             // $display("Test: Putting value");
             // printTile(testValues[putIndex]);
             putIndex <= putIndex + 1;
         end else if (putIndex == fromInteger(valueOf(NUM_TEST_VALUES))) begin
-            pmus[1][2].put_data(tagged Tag_EndToken 0);
+            pmus[1][1].put_data(tagged Tag_EndToken 0);
             putIndex <= putIndex + 1;
             // $display("Test: Putting end token");
         end
@@ -364,15 +367,15 @@ module mkTestPMUGrid(Empty);
 
     // === Handle token output ===
     rule handleToken (initialized);
-        let token <- pmus[1][2].get_token();
+        let token <- pmus[1][1].get_token();
         case (token) matches
             tagged Tag_Data {.d, .st}: begin
                 case (d) matches
                     tagged Tag_Ref {.r, .deallocate}: begin
                         // tokens.upd(getIndex, tuple2(r, deallocate));
-                        $display("Test: Got token %d %d %d", r, deallocate, st);
+                        $display("[TESTBENCH] Got token %d %d %d", r, deallocate, st);
                         getIndex <= getIndex + 1;
-                        pmus[1][2].put_token(tagged Tag_Data tuple2(tagged Tag_Ref tuple2(r, False), st));
+                        pmus[1][1].put_token(tagged Tag_Data tuple2(tagged Tag_Ref tuple2(r, False), st));
                     end
                     default: begin
                         $display("Expected scalar token, got something else");
@@ -381,8 +384,8 @@ module mkTestPMUGrid(Empty);
                 endcase
             end
             tagged Tag_EndToken .et: begin
-                $display("Test: End token received in token out");
-                pmus[1][2].put_token(tagged Tag_EndToken 0);
+                $display("[TESTBENCH] End token received in token out");
+                pmus[1][1].put_token(tagged Tag_EndToken 0);
             end
             default: begin
                 $display("Expected Tag_Data in token_out");
@@ -393,7 +396,7 @@ module mkTestPMUGrid(Empty);
 
     // === Handle returned value ===
     rule handleValue (initialized);
-        let value <- pmus[1][2].get_data();
+        let value <- pmus[1][1].get_data();
 
         case (value) matches
             tagged Tag_Data {.d, .st}: begin
@@ -403,13 +406,13 @@ module mkTestPMUGrid(Empty);
                         valIndex <= valIndex + 1;
 
                         if (TaggedTile { t: t, st: st } == expected) begin
-                            $display("PASSED:");
+                            $display("[TESTBENCH] PASSED:");
                             // printTile(TaggedTile { t: t, st: st });
                             $display("Expected [st = %0d]:", expected.st);
                             $display("Got [st = %0d]:", st);
                             // printTile(expected);
                         end else begin
-                            $display("FAILED:");
+                            $display("[TESTBENCH] FAILED:");
                             // printTile(TaggedTile { t: t, st: st });
                             $display("Expected [st = %0d]:", expected.st);
                             $display("Got [st = %0d]:", st);
@@ -424,8 +427,8 @@ module mkTestPMUGrid(Empty);
                 endcase
             end
             tagged Tag_EndToken .et: begin
-                $display("Test: End token received");
-                $display("All tests completed at cycle %d", pmus[1][2].get_cycle_count());
+                $display("[TESTBENCH] End token received");
+                $display("All tests completed at cycle %d", pmus[1][1].get_cycle_count());
                 $finish(0);
             end
             default: begin

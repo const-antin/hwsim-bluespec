@@ -1,7 +1,7 @@
 package Parameters;
 
 typedef 8 NUM_PCUS;
-typedef 4 NUM_PMUS; // This is side of a square -> really NUM_PMUS^2 = NUM_PMUS
+typedef 3 NUM_PMUS; // This is side of a square -> really NUM_PMUS^2 = NUM_PMUS
 
 typedef 4 NUM_INPUTS_PER_PCU;
 typedef 4 NUM_OUTPUTS_PER_PCU;
