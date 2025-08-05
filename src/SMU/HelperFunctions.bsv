@@ -2,6 +2,7 @@ package HelperFunctions;
 
 import Types::*;
 import Parameters::*;
+import Vector::*;
 
 // ============================================================================
 // Helper Functions
@@ -139,6 +140,19 @@ endfunction
 // Or create an overloaded version that takes StorageAddr
 function Bit#(TLog#(MAX_ENTRIES)) storageAddrToIndex(StorageAddr addr);
     return storageToIndex(addr.set, addr.frame);
+endfunction
+
+function Maybe#(Bit#(2)) roundRobinFind(Bit#(32) start, Vector#(4, Bool) ready);
+    Maybe#(Bit#(2)) return_val = tagged Invalid;
+    Bool found = False;
+    for (Integer i = 0; i < 4; i = i + 1) begin
+        Bit#(2) idx = truncate((start + fromInteger(i)) % 4);
+        if (!found && ready[idx]) begin
+            return_val = tagged Valid idx;
+            found = True;
+        end
+    end
+    return return_val;
 endfunction
 
 endpackage
