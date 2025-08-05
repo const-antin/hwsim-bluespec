@@ -114,6 +114,7 @@ module mkPMU#(
     (* descending_urgency = "deallocate_token, store_tile, round_robin_space_request" *)
     (* descending_urgency = "store_tile, receive_send_data" *)
     (* descending_urgency = "store_tile, receive_request_data" *)
+    (* descending_urgency = "space_request_no, round_robin_space_request" *)
     (* conflict_free = "receive_send_data, start_load_end_token" *)
     (* conflict_free = "receive_send_data, continue_load_tile" *)
 
@@ -127,24 +128,13 @@ module mkPMU#(
         deallocate_reg <= tagged Invalid;
     endrule
 
-    rule space_request_no (initialized &&& !isValid(next_free_set));
+    rule space_request_no (initialized &&& (!isValid(next_free_set) || space_request_in_flight || (isValid(next_free_set) &&& (next_free_set.Valid.x != coords.x || next_free_set.Valid.y != coords.y))));
         function notEmptyFunc(x) = tpl_1(x).notEmpty && tpl_2(x).notFull; 
         Vector#(4, Bool) has_data = map(notEmptyFunc, zip(receive_request_space, send_space));
         
         for (Bit#(32) i = 0; i < 4; i = i + 1) begin
             if (has_data[i]) begin
-                receive_request_space[i].deq;
-                send_space[i].enq(tagged Tag_FreeSpaceNo);
-            end
-        end
-    endrule
-
-    rule space_request_no_2 (initialized &&& isValid(next_free_set) &&& (next_free_set.Valid.x != coords.x || next_free_set.Valid.y != coords.y));
-        function notEmptyFunc(x) = tpl_1(x).notEmpty && tpl_2(x).notFull; 
-        Vector#(4, Bool) has_data = map(notEmptyFunc, zip(receive_request_space, send_space));
-        
-        for (Bit#(32) i = 0; i < 4; i = i + 1) begin
-            if (has_data[i]) begin
+                $display("PMU %d %d received space request from %s, sending no", coords.x, coords.y, directionIndexToName(unpack(truncate(i))));
                 receive_request_space[i].deq;
                 send_space[i].enq(tagged Tag_FreeSpaceNo);
             end
@@ -165,7 +155,7 @@ module mkPMU#(
             if (!found) begin
                 if (has_data[unpack(idx)]) begin
                     receive_request_space[idx].deq;
-                    $display("PMU %d, %d: Received space request from %s", coords.x, coords.y, directionIndexToName(unpack(truncate(idx))));
+                    $display("PMU %d, %d: Received space request from %s, sending yes", coords.x, coords.y, directionIndexToName(unpack(truncate(idx))));
                     found = True;
                     found_index = idx;
                     send_space[idx].enq(tagged Tag_FreeSpaceYes StorageAddr { set: next_free_set.Valid.set, frame: 0, x: coords.x, y: coords.y });
@@ -191,6 +181,7 @@ module mkPMU#(
                 if (has_data[unpack(idx)]) begin
                     receive_send_dealloc[idx].deq;
                     if (receive_send_dealloc[idx].first matches tagged Tag_Deallocate .loc) begin
+                        $display("DEALLOCATING GREEDILY ALLOCATED SET AT PMU %d %d", coords.x, coords.y);
                         free_list.freeSet(loc.set);
                         found = True;
                         found_index = idx;
@@ -218,13 +209,14 @@ module mkPMU#(
                 if (receive_send_space[i].first matches tagged Tag_FreeSpaceYes .loc) begin
                     if (num_yesses == 0) begin
                         next_free_set <= tagged Valid loc;
-                        $display("Received space from %s at location (pmu %d, %d, set %d, frame %d)", directionIndexToName(fromInteger(i)), loc.x, loc.y, loc.set, loc.frame);
+                        $display("PMU %d %d received space from %s at location (pmu %d, %d, set %d, frame %d)", coords.x, coords.y, directionIndexToName(fromInteger(i)), loc.x, loc.y, loc.set, loc.frame);
                     end else begin
+                        $display("PMU %d %d received space from %s at location (pmu %d, %d, set %d, frame %d), deallocating", coords.x, coords.y, directionIndexToName(fromInteger(i)), loc.x, loc.y, loc.set, loc.frame);
                         send_dealloc[i].enq(tagged Tag_Deallocate loc);
                     end
                     num_yesses = num_yesses + 1;
                 end else if (receive_send_space[i].first matches tagged Tag_FreeSpaceNo) begin
-                    $display("Received no from %s", directionIndexToName(fromInteger(i)));
+                    $display("PMU %d %d received no from %s", coords.x, coords.y, directionIndexToName(fromInteger(i)));
                 end
             end
         end
@@ -245,19 +237,19 @@ module mkPMU#(
                 $display("***** Out of memory at PMU %d, %d, load token validity is %d *****", coords.x, coords.y, isValid(load_token));
                 next_free_set <= tagged Invalid;
                 let num_requests_sent = 0;
-                if (request_space[0].notFull && coords.x > 0) begin
+                if (request_space[0].notFull && coords.y > 0) begin
                     request_space[0].enq(tagged Tag_EndToken 0);
                     num_requests_sent = num_requests_sent + 1;
                 end 
-                if (request_space[1].notFull && coords.x < fromInteger(valueOf(NUM_PMUS) - 1)) begin
+                if (request_space[1].notFull && coords.y < fromInteger(valueOf(NUM_PMUS) - 1)) begin
                     request_space[1].enq(tagged Tag_EndToken 0);
                     num_requests_sent = num_requests_sent + 1;  
                 end 
-                if (request_space[2].notFull && coords.y > 0) begin
+                if (request_space[2].notFull && coords.x > 0) begin
                     request_space[2].enq(tagged Tag_EndToken 0);
                     num_requests_sent = num_requests_sent + 1;
                 end
-                if (request_space[3].notFull && coords.y < fromInteger(valueOf(NUM_PMUS) - 1)) begin
+                if (request_space[3].notFull && coords.x < fromInteger(valueOf(NUM_PMUS) - 1)) begin
                     request_space[3].enq(tagged Tag_EndToken 0);
                     num_requests_sent = num_requests_sent + 1;
                 end 
@@ -266,6 +258,7 @@ module mkPMU#(
                 end else begin
                     space_request_in_flight <= True;
                     num_space_requests_in_flight <= num_requests_sent;
+                    $display("Sent %d space requests to neighbors at PMU %d, %d", num_requests_sent, coords.x, coords.y);
                 end
             end
         endcase
@@ -338,7 +331,7 @@ module mkPMU#(
                                 orig_token: load_token.Valid.orig_token 
                             };
                         end
-                        $display("ENQUEUING DATA TO OUTPUT IN RECEIVED SEND DATA LOAD");
+                        $display("ENQUEUING DATA TO OUTPUT IN RECEIVED SEND DATA LOAD AT PMU %d, %d", coords.x, coords.y);
                         data_out.enq(tagged Tag_Data tuple2(tagged Tag_Tile data.t, out_rank));
                     end
                 end
@@ -372,7 +365,7 @@ module mkPMU#(
                         if (deallocate &&& (!isValid(next) || loc.set != next.Valid.set)) begin
                             free_list.freeSet(loc.set); 
                         end
-                        $display("ENQUEUING DATA TO SEND TO NEIGHBOR");
+                        $display("ENQUEUING DATA TO SEND TO NEIGHBOR AT PMU %d, %d", coords.x, coords.y);
                         send_data[idx].enq(tagged Tag_Load DataWithNext { data: tile, loc: loc, next: next });
                     end
                 end
@@ -412,7 +405,7 @@ module mkPMU#(
     endrule
 
     rule store_tile (initialized && (isValid(next_free_set) || isValid(curr_loc)) &&& data_in.first matches tagged Tag_Data {.tt, .st});
-        $display("Fired store_tile");
+        $display("Fired store_tile at PMU %d, %d", coords.x, coords.y);
         data_in.deq;
 
         // initialization
@@ -446,7 +439,7 @@ module mkPMU#(
             new_loc = is_full ? tagged Invalid : tagged Valid StorageAddr { set: set, frame: frame + 1, x: curr_loc.Valid.x, y: curr_loc.Valid.y };
         end
         if (new_coords.x != coords.x || new_coords.y != coords.y) begin
-            $display("STORING TO NEIGHBOR %s at location (pmu %d, %d, set %d, frame %d)", directionIndexToName(directionToIndex(getNeighborDirection(coords, new_coords))), new_coords.x, new_coords.y, set, frame);
+            $display("STORING TO NEIGHBOR %s at location (pmu %d, %d, set %d, frame %d) AT PMU %d, %d", directionIndexToName(directionToIndex(getNeighborDirection(coords, new_coords))), new_coords.x, new_coords.y, set, frame, coords.x, coords.y);
             let neighbor_dir = getNeighborDirection(coords, new_coords);
             send_data[directionToIndex(neighbor_dir)].enq(tagged Tag_Store DataWithNext {data: TaggedTile { t: tile, st: st }, loc: StorageAddr { set: set, frame: frame, x: new_coords.x, y: new_coords.y }, next: new_loc});
         end else begin 
@@ -501,7 +494,7 @@ module mkPMU#(
     endrule
 
     rule start_load_tile (initialized &&& !isValid(load_token) &&& token_in.first matches tagged Tag_Data {.tt, .st});
-        $display("Fired start load tile");
+        $display("Fired start load tile at PMU %d, %d", coords.x, coords.y);
         token_in.deq;
         let token_input = unwrapRef(tt);
         let maybe_packed_loc = first_entry.sub(truncate(token_input.fst));
@@ -514,7 +507,7 @@ module mkPMU#(
     endrule
 
     rule continue_load_tile (initialized &&& load_token matches tagged Valid .load_tk_val &&& !isValid(deallocate_reg) &&& !data_request_in_flight);
-        $display("Fired continue load tile");
+        $display("Fired continue load tile at PMU %d, %d", coords.x, coords.y);
         StorageAddr loc = load_tk_val.loc;
         let deallocate = load_tk_val.deallocate;
         let st = load_tk_val.st;
@@ -571,7 +564,7 @@ module mkPMU#(
     // ============================================================================
 
     rule store_end_token (initialized &&& data_in.first matches tagged Tag_EndToken .et);
-        $display("End token received in store");
+        $display("End token received in store at PMU %d, %d", coords.x, coords.y);
         data_in.deq;
         token_out.enq(tagged Tag_EndToken et);
     endrule
@@ -587,7 +580,7 @@ module mkPMU#(
     endrule
 
     rule start_load_end_token (initialized &&& !isValid(load_token) &&& !data_request_in_flight &&& token_in.first matches tagged Tag_EndToken .et);
-        $display("End token received in start load");
+        $display("End token received in start load at PMU %d, %d", coords.x, coords.y);
         token_in.deq;
         // Print state of memory at end of stream
         for (Integer i = 0; i < valueOf(SETS); i = i + 1) begin
