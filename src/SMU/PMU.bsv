@@ -1,12 +1,12 @@
 // TODO: Make everything work in fifo order. I think this should immediately work as long as I emit the token earlier. 
     // I already have the logic necessary to make sure i don't read data that hasn't been stored (untested)
-
 // TODO: Replace loop with find
 // TODO: Remove memory size dependency on tile size, should just have banks be as large as possible
 // TODO: Swap registers for SRAM
 // TODO: rank shouldnt be a parameter, should be stored in a reg and parsed from a config input
-// TODO: Technically having the entry ports to be guarded might be a problem, because if I want to enqueue only in one direction, but another blocks, thats wrong.
+// TODO: Technically having the entry ports to be guarded might be a problem, because if I want to enqueue only in one direction, but another blocks, thats wrong. SOLVE THIS****
 // TODO: Fair aribitration between directions data is sent, currently prioritizes north, then south, then west, then east.
+// TODO: Tag pmus as bufferizes and dont store to neighbors if theyre also a bufferize
 
 package PMU;
 
@@ -55,10 +55,10 @@ module mkPMU#(
     // Internal state
     // ============================================================================
 
-    FIFO#(ChannelMessage) data_in <- mkFIFO;      // Values come in here
-    FIFO#(ChannelMessage) token_out <- mkFIFO;    // Generated tokens go out here
-    FIFO#(ChannelMessage) token_in <- mkFIFO;     // Tokens come back in here
-    FIFO#(ChannelMessage) data_out <- mkFIFO;     // Retrieved values go out here
+    FIFOF#(ChannelMessage) data_in <- mkFIFOF;      // Values come in here
+    FIFOF#(ChannelMessage) token_out <- mkGFIFOF(True, False);    // Generated tokens go out here
+    FIFOF#(ChannelMessage) token_in <- mkFIFOF;     // Tokens come back in here
+    FIFOF#(ChannelMessage) data_out <- mkFIFOF;     // Retrieved values go out here
 
     // initialization and cycle count
     Reg#(Bit#(32)) cycle_count <- mkReg(0);
@@ -87,11 +87,18 @@ module mkPMU#(
 
     // In flight trackers
     Reg#(Bool) space_request_in_flight <- mkReg(False);
+    Reg#(Int#(32)) num_yesses <- mkReg(0);
+    Reg#(Int#(32)) num_responses_received <- mkReg(0);
     Reg#(Int#(32)) num_space_requests_in_flight <- mkReg(0);
     Reg#(Bool) data_request_in_flight <- mkReg(False);
 
     // Round robin counters
     Reg#(Bit#(32)) space_round_robin_counter <- mkReg(0);
+    Wire#(Maybe#(Bit#(2))) request_space_wire <- mkDWire(tagged Invalid);
+    Wire#(Maybe#(Bit#(2))) receive_deallocate_wire <- mkDWire(tagged Invalid);
+    Vector#(4, Reg#(Bool)) send_request_space_wire <- replicateM(mkDWire(False));
+    Wire#(Maybe#(Tuple2#(DataWithNext, Bit#(2)))) receive_request_data_send_data <- mkDWire(tagged Invalid);
+    Wire#(Maybe#(Tuple2#(UInt#(2), RequestStorageAddr))) continue_load_tile_request_data <- mkDWire(tagged Invalid);
     Reg#(Bit#(32)) dealloc_round_robin_counter <- mkReg(0);
     Reg#(Bit#(32)) receive_send_data_round_robin_counter_store <- mkReg(0);
     Reg#(Bit#(32)) receive_send_data_round_robin_counter_load <- mkReg(0);
@@ -99,6 +106,8 @@ module mkPMU#(
     Reg#(Bit#(32)) receive_send_update_pointer_round_robin_counter <- mkReg(0);
 
     Wire#(Maybe#(Bit#(2))) store_direction <- mkDWire(tagged Invalid);
+    Vector#(4, Wire#(Maybe#(StorageAddr))) dealloc_wire <- replicateM(mkDWire(tagged Invalid));
+    Wire#(Maybe#(Tuple2#(Data, StopToken))) receive_send_data_output <- mkDWire(tagged Invalid);
 
     ConfigReg#(Bit#(32)) num_stored_to_current_frame <- mkConfigReg(0);
 
@@ -106,17 +115,27 @@ module mkPMU#(
     // Rule Orderings
     // ============================================================================
 
-    (* execution_order = "cycle_counter, round_robin_space_request, receive_send_space, store_tile, next_free, continue_load_tile" *)
-    (* execution_order = "cycle_counter, start_load_tile, receive_send_data" *)
-    (* execution_order = "receive_deallocate, receive_request_data, next_free, continue_load_tile" *)
+    (* execution_order = "round_robin_space_request, receive_send_space, store_tile, next_free" *)
+    (* execution_order = "start_load_tile, receive_send_data" *)
+    (* execution_order = "receive_deallocate, receive_request_data, next_free" *)
     (* execution_order = "receive_send_update_pointer, receive_send_data" *)
     (* execution_order = "receive_send_update_pointer, store_tile" *)
+    (* execution_order = "round_robin_space_request_enact, next_free" *)
+    (* execution_order = "receive_send_space, round_robin_space_request_enact" *)
+    (* execution_order = "continue_load_tile, next_free" *)
+    (* execution_order = "receive_deallocate_enact, next_free" *)
     (* descending_urgency = "deallocate_token, store_tile, round_robin_space_request" *)
     (* descending_urgency = "store_tile, receive_send_data" *)
-    (* descending_urgency = "store_tile, receive_request_data" *)
-    (* descending_urgency = "space_request_no, round_robin_space_request" *)
+    (* descending_urgency = "store_tile, receive_request_data, receive_request_data_enq" *)
+    (* descending_urgency = "space_request_no_0, space_request_no_1, space_request_no_2, space_request_no_3, round_robin_space_request" *)
     (* conflict_free = "receive_send_data, start_load_end_token" *)
     (* conflict_free = "receive_send_data, continue_load_tile" *)
+    (* conflict_free = "receive_send_data_enq, continue_load_tile" *)
+    (* mutually_exclusive = "space_request_no_0, round_robin_space_request_enact" *)
+    (* mutually_exclusive = "space_request_no_1, round_robin_space_request_enact" *)
+    (* mutually_exclusive = "space_request_no_2, round_robin_space_request_enact" *)
+    (* mutually_exclusive = "space_request_no_3, round_robin_space_request_enact" *)
+    (* mutually_exclusive = "receive_send_data_enq, start_load_end_token" *)
 
     // ============================================================================
     // Main Logic Rules
@@ -128,67 +147,97 @@ module mkPMU#(
         deallocate_reg <= tagged Invalid;
     endrule
 
-    rule space_request_no (initialized &&& (!isValid(next_free_set) || space_request_in_flight || (isValid(next_free_set) &&& (next_free_set.Valid.x != coords.x || next_free_set.Valid.y != coords.y))));
-        function notEmptyFunc(x) = tpl_1(x).notEmpty && tpl_2(x).notFull; 
-        Vector#(4, Bool) has_data = map(notEmptyFunc, zip(receive_request_space, send_space));
-        
-        for (Bit#(32) i = 0; i < 4; i = i + 1) begin
-            if (has_data[i]) begin
-                receive_request_space[i].deq;
-                send_space[i].enq(tagged Tag_FreeSpaceNo);
-            end
-        end
+    rule space_request_no_0 (initialized &&& (!isValid(next_free_set) || space_request_in_flight || (isValid(next_free_set) &&& (next_free_set.Valid.x != coords.x || next_free_set.Valid.y != coords.y))));
+        receive_request_space[0].deq;
+        send_space[0].enq(tagged Tag_FreeSpaceNo);
+    endrule
+    rule space_request_no_1 (initialized &&& (!isValid(next_free_set) || space_request_in_flight || (isValid(next_free_set) &&& (next_free_set.Valid.x != coords.x || next_free_set.Valid.y != coords.y))));
+        receive_request_space[1].deq;
+        send_space[1].enq(tagged Tag_FreeSpaceNo);
+    endrule
+    rule space_request_no_2 (initialized &&& (!isValid(next_free_set) || space_request_in_flight || (isValid(next_free_set) &&& (next_free_set.Valid.x != coords.x || next_free_set.Valid.y != coords.y))));
+        receive_request_space[2].deq;
+        send_space[2].enq(tagged Tag_FreeSpaceNo);
+    endrule
+    rule space_request_no_3 (initialized &&& (!isValid(next_free_set) || space_request_in_flight || (isValid(next_free_set) &&& (next_free_set.Valid.x != coords.x || next_free_set.Valid.y != coords.y))));
+        receive_request_space[3].deq;
+        send_space[3].enq(tagged Tag_FreeSpaceNo);
     endrule
 
     rule round_robin_space_request (initialized &&& isValid(next_free_set) &&& next_free_set.Valid.x == coords.x &&& next_free_set.Valid.y == coords.y);
-        function notEmptyFunc(x) = tpl_1(x).notEmpty && tpl_2(x).notFull; 
-        Vector#(4, Bool) has_data = map(notEmptyFunc, zip(receive_request_space, send_space));
-        Maybe#(Bit#(2)) m_idx = roundRobinFind(space_round_robin_counter, has_data);
-        if (m_idx matches tagged Valid .idx) begin
-            receive_request_space[idx].deq;
-            send_space[idx].enq(tagged Tag_FreeSpaceYes StorageAddr { set: next_free_set.Valid.set, frame: 0, x: coords.x, y: coords.y });
-            next_free_set <= tagged Invalid;
-            space_round_robin_counter <= (zeroExtend(idx) + 1) % 4;
-        end
+        function notEmptyNotFull(x) = tpl_1(x).notEmpty && tpl_2(x).notFull;
+        Vector#(4, Bool) has_data = map(notEmptyNotFull, zip(receive_request_space, send_space));
+        request_space_wire <= roundRobinFind(space_round_robin_counter, has_data);
+    endrule
+    rule round_robin_space_request_enact (request_space_wire matches tagged Valid .idx);
+        receive_request_space[idx].deq;
+        send_space[idx].enq(tagged Tag_FreeSpaceYes StorageAddr { set: next_free_set.Valid.set, frame: 0, x: coords.x, y: coords.y });
+        next_free_set <= tagged Invalid;
+        space_round_robin_counter <= (zeroExtend(idx) + 1) % 4;
     endrule
 
     rule receive_deallocate (initialized);
         function notEmptyFunc(x) = x.notEmpty;
         Vector#(4, Bool) has_data = map(notEmptyFunc, receive_send_dealloc);
-        Maybe#(Bit#(2)) m_idx = roundRobinFind(dealloc_round_robin_counter, has_data);
-        if (m_idx matches tagged Valid .idx) begin
-            receive_send_dealloc[idx].deq;
-            let loc = receive_send_dealloc[idx].first.Tag_Deallocate;
-            free_list.freeSet(loc.set);
-            dealloc_round_robin_counter <= (zeroExtend(idx) + 1) % 4;
-        end
+        receive_deallocate_wire <= roundRobinFind(dealloc_round_robin_counter, has_data);
+    endrule
+    rule receive_deallocate_enact (receive_deallocate_wire matches tagged Valid .idx);
+        receive_send_dealloc[idx].deq;
+        let loc = receive_send_dealloc[idx].first.Tag_Deallocate;
+        free_list.freeSet(loc.set);
+        dealloc_round_robin_counter <= (zeroExtend(idx) + 1) % 4;
     endrule
 
     rule receive_send_space (initialized && space_request_in_flight);
-        function notEmptyFunc(x) = x.notEmpty;
-        Vector#(4, Bool) has_data = map(notEmptyFunc, receive_send_space);
-        
-        Int#(32) num_responses_received = 0;
-        Int#(32) num_yesses = 0;
+        function notEmptyFunc(x) = tpl_1(x).notEmpty && tpl_2(x).notFull;
+        Vector#(4, Bool) has_data = map(notEmptyFunc, zip(receive_send_space, send_dealloc));
+
+        Int#(32) num_yesses_temp = 0;
+        Int#(32) num_responses_temp = 0;
         
         for (Integer i = 0; i < 4; i = i + 1) begin
             if (has_data[i]) begin
                 receive_send_space[i].deq;
-                num_responses_received = num_responses_received + 1;
+                num_responses_temp = num_responses_temp + 1;
                 
                 if (receive_send_space[i].first matches tagged Tag_FreeSpaceYes .loc) begin
-                    if (num_yesses == 0) begin
+                    if (num_yesses == 0 && num_yesses_temp == 0) begin
                         next_free_set <= tagged Valid loc;
                     end else begin
-                        send_dealloc[i].enq(tagged Tag_Deallocate loc);
+                        dealloc_wire[i] <= tagged Valid loc;
                     end
-                    num_yesses = num_yesses + 1;
+                    num_yesses_temp = num_yesses_temp + 1;
                 end
             end
         end
 
-        if (num_responses_received == num_space_requests_in_flight) begin
+        if (num_responses_received + num_responses_temp == num_space_requests_in_flight) begin
             space_request_in_flight <= False;
+            num_yesses <= 0;
+            num_responses_received <= 0;
+        end else begin
+            num_responses_received <= num_responses_received + num_responses_temp;
+            num_yesses <= num_yesses + num_yesses_temp;
+        end
+    endrule
+    rule send_dealloc0;
+        if (dealloc_wire[0] matches tagged Valid .loc) begin
+            send_dealloc[0].enq(tagged Tag_Deallocate dealloc_wire[0].Valid);
+        end
+    endrule
+    rule send_dealloc1;
+        if (dealloc_wire[1] matches tagged Valid .loc) begin
+            send_dealloc[1].enq(tagged Tag_Deallocate dealloc_wire[1].Valid);
+        end
+    endrule
+    rule send_dealloc2;
+        if (dealloc_wire[2] matches tagged Valid .loc) begin
+            send_dealloc[2].enq(tagged Tag_Deallocate dealloc_wire[2].Valid);
+        end
+    endrule
+    rule send_dealloc3;
+        if (dealloc_wire[3] matches tagged Valid .loc) begin
+            send_dealloc[3].enq(tagged Tag_Deallocate dealloc_wire[3].Valid);
         end
     endrule
 
@@ -203,19 +252,19 @@ module mkPMU#(
                 next_free_set <= tagged Invalid;
                 let num_requests_sent = 0;
                 if (request_space[0].notFull && coords.y > 0) begin
-                    request_space[0].enq(tagged Tag_EndToken 0);
+                    send_request_space_wire[0] <= True;
                     num_requests_sent = num_requests_sent + 1;
                 end 
                 if (request_space[1].notFull && coords.y < fromInteger(valueOf(NUM_PMUS) - 1)) begin
-                    request_space[1].enq(tagged Tag_EndToken 0);
+                    send_request_space_wire[1] <= True;
                     num_requests_sent = num_requests_sent + 1;  
                 end 
                 if (request_space[2].notFull && coords.x > 0) begin
-                    request_space[2].enq(tagged Tag_EndToken 0);
+                    send_request_space_wire[2] <= True;
                     num_requests_sent = num_requests_sent + 1;
                 end
                 if (request_space[3].notFull && coords.x < fromInteger(valueOf(NUM_PMUS) - 1)) begin
-                    request_space[3].enq(tagged Tag_EndToken 0);
+                    send_request_space_wire[3] <= True;
                     num_requests_sent = num_requests_sent + 1;
                 end 
                 if (num_requests_sent == 0) begin 
@@ -227,13 +276,24 @@ module mkPMU#(
             end
         endcase
     endrule
+    rule next_free_0 (send_request_space_wire[0]);
+        request_space[0].enq(tagged Tag_EndToken 0);
+    endrule
+    rule next_free_1 (send_request_space_wire[1]);
+        request_space[1].enq(tagged Tag_EndToken 0);
+    endrule
+    rule next_free_2 (send_request_space_wire[2]);
+        request_space[2].enq(tagged Tag_EndToken 0);
+    endrule
+    rule next_free_3 (send_request_space_wire[3]);
+        request_space[3].enq(tagged Tag_EndToken 0);
+    endrule
 
     rule receive_send_data (initialized);
         function notEmptyAndStore(x) = x.notEmpty &&& (x.first matches tagged Tag_Store .d ? True : False);
         Vector#(4, Bool) has_store_data = map(notEmptyAndStore, receive_send_data);
-        function notEmptyAndLoad(x) = data_request_in_flight &&& x.fst.notEmpty &&& (x.fst.first matches tagged Tag_Load .d ? True : False) &&& !x.snd;
-        Vector#(4, Tuple2#(FIFOF#(MessageType), Bool)) paired_data = zip(receive_send_data, has_store_data);
-        Vector#(4, Bool) has_load_data = map(notEmptyAndLoad, paired_data);
+        function notEmptyAndLoad(x) = data_out.notFull &&& data_request_in_flight &&& x.fst.notEmpty &&& (x.fst.first matches tagged Tag_Load .d ? True : False) &&& !x.snd;
+        Vector#(4, Bool) has_load_data = map(notEmptyAndLoad, zip(receive_send_data, has_store_data));
 
         Maybe#(Bit#(2)) m_idx = roundRobinFind(receive_send_data_round_robin_counter_store, has_store_data);
         if (m_idx matches tagged Valid .idx) begin
@@ -270,15 +330,18 @@ module mkPMU#(
                         orig_token: load_token.Valid.orig_token 
                     };
                 end
-                data_out.enq(tagged Tag_Data tuple2(tagged Tag_Tile data.t, out_rank));
+                receive_send_data_output <= tagged Valid tuple2(tagged Tag_Tile data.t, out_rank);
             end
             receive_send_data_round_robin_counter_load <= (zeroExtend(idx) + 1) % 4;
         end
     endrule
+    rule receive_send_data_enq (receive_send_data_output matches tagged Valid .out);
+        data_out.enq(tagged Tag_Data out);
+    endrule
 
     rule receive_request_data (initialized);
-        function notEmpty(x) = x.notEmpty;
-        Vector#(4, Bool) has_data = map(notEmpty, receive_request_data);
+        function notEmptyNotFull(x) = tpl_1(x).notEmpty && tpl_2(x).notFull;
+        Vector#(4, Bool) has_data = map(notEmptyNotFull, zip(receive_request_data, send_data));
         Maybe#(Bit#(2)) m_idx = roundRobinFind(receive_request_data_round_robin_counter, has_data);
         if (m_idx matches tagged Valid .idx) begin
             receive_request_data[idx].deq;
@@ -290,10 +353,13 @@ module mkPMU#(
                 if (deallocate &&& (!isValid(next) || loc.set != next.Valid.set)) begin
                     free_list.freeSet(loc.set); 
                 end
-                send_data[idx].enq(tagged Tag_Load DataWithNext { data: tile, loc: loc, next: next });
+                receive_request_data_send_data <= tagged Valid tuple2(DataWithNext { data: tile, loc: loc, next: next }, idx);
             end
             receive_request_data_round_robin_counter <= (zeroExtend(idx) + 1) % 4;
         end
+    endrule
+    rule receive_request_data_enq (receive_request_data_send_data matches tagged Valid .data_with_next);
+        send_data[tpl_2(data_with_next)].enq(tagged Tag_Load tpl_1(data_with_next));
     endrule
 
     rule receive_send_update_pointer (initialized);
@@ -312,92 +378,106 @@ module mkPMU#(
     endrule
 
     rule store_tile (initialized && (isValid(next_free_set) || isValid(curr_loc)) &&& data_in.first matches tagged Tag_Data {.tt, .st});
-        data_in.deq;
-
         // initialization
         let tile = unwrapTile(tt);
         let {new_st, emit_token} = processStopToken(st, rank);
 
-        SET_INDEX set;
-        FRAME_INDEX frame; 
+        Bool prev_is_local = (prev_stored.x == coords.x && prev_stored.y == coords.y);
+        Bool need_to_send_update_to_neighbor = isValid(first_entry.sub(token_counter)) && !prev_is_local && prev_stored.frame == fromInteger(valueOf(FRAMES_PER_SET) - 1);
+        Bool can_update_neighbor_if_needed = !need_to_send_update_to_neighbor || send_update_pointer[directionToIndex(getNeighborDirection(coords, Coords { x: prev_stored.x, y: prev_stored.y }))].notFull;
+
+        Bool send_to_neighbor_possible_if_needed = True;
         Coords new_coords;
-        Maybe#(StorageAddr) new_loc;
         if (!isValid(curr_loc)) begin
-            set = next_free_set.Valid.set;
-            frame = 0;
             new_coords = Coords { x: next_free_set.Valid.x, y: next_free_set.Valid.y };
-            if (new_coords == coords) begin
-                usage_tracker.setFrame(set, 1);
-            end
-            num_stored_to_current_frame <= 1;
-            next_free_set <= tagged Invalid;
-            if (fromInteger(valueOf(FRAMES_PER_SET)) > 1) begin
-                new_loc = tagged Valid StorageAddr { set: next_free_set.Valid.set, frame: 1, x: next_free_set.Valid.x, y: next_free_set.Valid.y };
-            end else begin
-                new_loc = tagged Invalid;
-            end
         end else begin
-            set = curr_loc.Valid.set;
-            frame = curr_loc.Valid.frame;
             new_coords = Coords { x: curr_loc.Valid.x, y: curr_loc.Valid.y };
-            if (new_coords == coords) begin
-                usage_tracker.incFrame(set);
-            end
-            let full = num_stored_to_current_frame == fromInteger(valueOf(FRAMES_PER_SET) - 1);
-            num_stored_to_current_frame <= num_stored_to_current_frame + 1;
-            let is_full = full || emit_token;
-            new_loc = is_full ? tagged Invalid : tagged Valid StorageAddr { set: set, frame: frame + 1, x: curr_loc.Valid.x, y: curr_loc.Valid.y };
         end
         if (new_coords.x != coords.x || new_coords.y != coords.y) begin
             let neighbor_dir = getNeighborDirection(coords, new_coords);
-            send_data[directionToIndex(neighbor_dir)].enq(tagged Tag_Store DataWithNext {data: TaggedTile { t: tile, st: st }, loc: StorageAddr { set: set, frame: frame, x: new_coords.x, y: new_coords.y }, next: new_loc});
-        end else begin 
-            mem.write(set, frame, TaggedTile { t: tile, st: st });
+            send_to_neighbor_possible_if_needed = send_data[directionToIndex(neighbor_dir)].notFull;
         end
-        prev_loc <= curr_loc;
-        curr_loc <= new_loc;
 
-        // update the storage location pointer chain
-        if (first_entry.sub(token_counter) matches tagged Invalid) begin
-            let p = StorageAddr { set: set, frame: frame, x: new_coords.x, y: new_coords.y };
-            first_entry.upd(token_counter, tagged Valid p);
-            if (new_coords.x == coords.x && new_coords.y == coords.y) begin
-                next_table[storageAddrToIndex(p)] <= tagged Invalid;
+        if ((!emit_token || token_out.notFull) && can_update_neighbor_if_needed && send_to_neighbor_possible_if_needed) begin
+            if (emit_token) begin
+                Bit#(32) token_to_emit = zeroExtend(token_counter);
+                token_complete.upd(token_counter, True);
+                token_out.enq(tagged Tag_Data tuple2(tagged Tag_Ref tuple2(token_to_emit, True), new_st)); // token enq is unguarded
+                token_counter <= token_counter + 1;
             end
-            prev_stored <= p;
-        end else begin
-            let p = StorageAddr { set: set, frame: frame, x: new_coords.x, y: new_coords.y };
-            Bool prev_is_local = (prev_stored.x == coords.x && prev_stored.y == coords.y);
-            Bool curr_is_local = (new_coords.x == coords.x && new_coords.y == coords.y);
 
-            if (prev_is_local && curr_is_local) begin
-                let prev_index = storageAddrToIndex(prev_stored);
-                let curr_index = storageAddrToIndex(p);
-                if (prev_index != curr_index) begin
-                    next_table[prev_index] <= tagged Valid p;      // prev points to new location
-                    next_table[curr_index] <= tagged Invalid;      // new location has no next
-                end else begin
-                    // Same index (shouldnt happen in practice, but handle it)
-                    next_table[curr_index] <= tagged Invalid; 
+            data_in.deq;
+
+            SET_INDEX set;
+            FRAME_INDEX frame; 
+            Maybe#(StorageAddr) new_loc;
+            if (!isValid(curr_loc)) begin
+                set = next_free_set.Valid.set;
+                frame = 0;
+                if (new_coords == coords) begin
+                    usage_tracker.setFrame(set, 1);
                 end
-            end else if (prev_is_local) begin
-                next_table[storageAddrToIndex(prev_stored)] <= tagged Valid p;
-            end else if (curr_is_local) begin
-                next_table[storageAddrToIndex(p)] <= tagged Invalid;
+                num_stored_to_current_frame <= 1;
+                next_free_set <= tagged Invalid;
+                if (fromInteger(valueOf(FRAMES_PER_SET)) > 1) begin
+                    new_loc = tagged Valid StorageAddr { set: next_free_set.Valid.set, frame: 1, x: next_free_set.Valid.x, y: next_free_set.Valid.y };
+                end else begin
+                    new_loc = tagged Invalid;
+                end
+            end else begin
+                set = curr_loc.Valid.set;
+                frame = curr_loc.Valid.frame;
+                if (new_coords == coords) begin
+                    usage_tracker.incFrame(set);
+                end
+                let full = num_stored_to_current_frame == fromInteger(valueOf(FRAMES_PER_SET) - 1);
+                num_stored_to_current_frame <= num_stored_to_current_frame + 1;
+                let is_full = full || emit_token;
+                new_loc = is_full ? tagged Invalid : tagged Valid StorageAddr { set: set, frame: frame + 1, x: curr_loc.Valid.x, y: curr_loc.Valid.y };
             end
+            if (new_coords.x != coords.x || new_coords.y != coords.y) begin
+                let neighbor_dir = getNeighborDirection(coords, new_coords);
+                send_data[directionToIndex(neighbor_dir)].enq(tagged Tag_Store DataWithNext {data: TaggedTile { t: tile, st: st }, loc: StorageAddr { set: set, frame: frame, x: new_coords.x, y: new_coords.y }, next: new_loc}); // this is unguarded
+            end else begin 
+                mem.write(set, frame, TaggedTile { t: tile, st: st });
+            end
+            prev_loc <= curr_loc;
+            curr_loc <= new_loc;
 
-            // update pointer chain
-            if (!prev_is_local && prev_stored.frame == fromInteger(valueOf(FRAMES_PER_SET) - 1)) begin
-                send_update_pointer[directionToIndex(getNeighborDirection(coords, Coords { x: prev_stored.x, y: prev_stored.y }))].enq(tagged Tag_Update_Next_Table PrevToNextTag { prev: prev_stored, next: p });
-            end 
-            prev_stored <= p;
-        end
+            // update the storage location pointer chain
+            if (first_entry.sub(token_counter) matches tagged Invalid) begin
+                let p = StorageAddr { set: set, frame: frame, x: new_coords.x, y: new_coords.y };
+                first_entry.upd(token_counter, tagged Valid p);
+                if (new_coords.x == coords.x && new_coords.y == coords.y) begin
+                    next_table[storageAddrToIndex(p)] <= tagged Invalid;
+                end
+                prev_stored <= p;
+            end else begin
+                let p = StorageAddr { set: set, frame: frame, x: new_coords.x, y: new_coords.y };
+                Bool curr_is_local = (new_coords.x == coords.x && new_coords.y == coords.y);
 
-        if (emit_token) begin
-            Bit#(32) token_to_emit = zeroExtend(token_counter);
-            token_complete.upd(token_counter, True);
-            token_out.enq(tagged Tag_Data tuple2(tagged Tag_Ref tuple2(token_to_emit, True), new_st));
-            token_counter <= token_counter + 1;
+                if (prev_is_local && curr_is_local) begin
+                    let prev_index = storageAddrToIndex(prev_stored);
+                    let curr_index = storageAddrToIndex(p);
+                    if (prev_index != curr_index) begin
+                        next_table[prev_index] <= tagged Valid p;      // prev points to new location
+                        next_table[curr_index] <= tagged Invalid;      // new location has no next
+                    end else begin
+                        // Same index (shouldnt happen in practice, but handle it)
+                        next_table[curr_index] <= tagged Invalid; 
+                    end
+                end else if (prev_is_local) begin
+                    next_table[storageAddrToIndex(prev_stored)] <= tagged Valid p;
+                end else if (curr_is_local) begin
+                    next_table[storageAddrToIndex(p)] <= tagged Invalid;
+                end
+
+                // update pointer chain
+                if (!prev_is_local && prev_stored.frame == fromInteger(valueOf(FRAMES_PER_SET) - 1)) begin
+                    send_update_pointer[directionToIndex(getNeighborDirection(coords, Coords { x: prev_stored.x, y: prev_stored.y }))].enq(tagged Tag_Update_Next_Table PrevToNextTag { prev: prev_stored, next: p }); // enq is unguarded
+                end 
+                prev_stored <= p;
+            end
         end
     endrule
 
@@ -427,11 +507,12 @@ module mkPMU#(
             let frame = loc.frame;
             let x = loc.x;
             let y = loc.y;
-            if (coords.x != x || coords.y != y) begin
+            let request_coords = Coords {x: x, y: y};
+            let dir = directionToIndex(getNeighborDirection(coords, request_coords));
+            if (coords.x != x || coords.y != y && request_data[dir].notFull) begin
                 data_request_in_flight <= True;
-                let request_coords = Coords {x: x, y: y};
-                request_data[directionToIndex(getNeighborDirection(coords, request_coords))].enq(tagged Tag_Request_Data RequestStorageAddr { loc: loc, deallocate: deallocate });
-            end else begin 
+                continue_load_tile_request_data <= tagged Valid tuple2(dir, RequestStorageAddr { loc: loc, deallocate: deallocate });
+            end else if (data_out.notFull) begin 
                 let tile = mem.read(set, frame);
                 let out_rank = tile.st;
 
@@ -448,7 +529,7 @@ module mkPMU#(
                     end
                 end
                 
-                data_out.enq(tagged Tag_Data tuple2(tagged Tag_Tile tile.t, out_rank));
+                receive_send_data_output <= tagged Valid tuple2(tagged Tag_Tile tile.t, out_rank);
                 if (deallocate && x == coords.x && y == coords.y) begin
                     if (set != next_set) begin
                         free_list.freeSet(set); 
@@ -458,12 +539,15 @@ module mkPMU#(
 
         end
     endrule
+    rule continue_load_tile_enq (continue_load_tile_request_data matches tagged Valid .continue_load_tile_request_info);
+        request_data[tpl_1(continue_load_tile_request_info)].enq(tagged Tag_Request_Data tpl_2(continue_load_tile_request_info));
+    endrule
 
     // ============================================================================
     // End Token and Error Rules
     // ============================================================================
 
-    rule store_end_token (initialized &&& data_in.first matches tagged Tag_EndToken .et);
+    rule store_end_token (initialized &&& data_in.first matches tagged Tag_EndToken .et &&& token_out.notFull);
         $display("End token received in store at PMU %d, %d", coords.x, coords.y);
         data_in.deq;
         token_out.enq(tagged Tag_EndToken et);

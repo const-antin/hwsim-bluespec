@@ -4,6 +4,7 @@ import PMU::*;
 import Types::*;
 import Vector::*;
 import FIFOF::*;
+import SpecialFIFOs::*;
 import Parameters::*;
 import RegFile::*;
 import ConfigReg::*;        // Added for the new test
@@ -470,29 +471,29 @@ module mkTestPMUGrid2(Empty);
     // Create shared FIFOs for the mesh
     Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) ns_request_data <- replicateM(replicateM(mkGFIFOF(False, True)));
     Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) sn_request_data <- replicateM(replicateM(mkGFIFOF(False, True)));
-    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) ns_send_data <- replicateM(replicateM(mkGFIFOF(False, True)));
-    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) sn_send_data <- replicateM(replicateM(mkGFIFOF(False, True)));
-    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) ns_request_space <- replicateM(replicateM(mkGFIFOF(False, True)));
-    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) sn_request_space <- replicateM(replicateM(mkGFIFOF(False, True)));
+    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) ns_send_data <- replicateM(replicateM(mkGFIFOF(True, True)));
+    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) sn_send_data <- replicateM(replicateM(mkGFIFOF(True, True)));
+    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) ns_request_space <- replicateM(replicateM(mkPipelineFIFOF));
+    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) sn_request_space <- replicateM(replicateM(mkPipelineFIFOF));
     Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) ns_send_space <- replicateM(replicateM(mkGFIFOF(False, True)));
     Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) sn_send_space <- replicateM(replicateM(mkGFIFOF(False, True)));
     Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) ns_send_dealloc <- replicateM(replicateM(mkGFIFOF(False, True)));
     Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) sn_send_dealloc <- replicateM(replicateM(mkGFIFOF(False, True)));
-    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) ns_send_update_pointer <- replicateM(replicateM(mkGFIFOF(False, True)));
-    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) sn_send_update_pointer <- replicateM(replicateM(mkGFIFOF(False, True)));
+    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) ns_send_update_pointer <- replicateM(replicateM(mkGFIFOF(True, True)));
+    Vector#(TAdd#(NUM_PMUS, 1), Vector#(NUM_PMUS, FIFOF#(MessageType))) sn_send_update_pointer <- replicateM(replicateM(mkGFIFOF(True, True)));
 
     Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) ew_request_data <- replicateM(replicateM(mkGFIFOF(False, True)));
     Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) we_request_data <- replicateM(replicateM(mkGFIFOF(False, True)));
-    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) ew_send_data <- replicateM(replicateM(mkGFIFOF(False, True)));
-    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) we_send_data <- replicateM(replicateM(mkGFIFOF(False, True)));
-    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) ew_request_space <- replicateM(replicateM(mkGFIFOF(False, True)));
-    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) we_request_space <- replicateM(replicateM(mkGFIFOF(False, True)));
+    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) ew_send_data <- replicateM(replicateM(mkGFIFOF(True, True)));
+    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) we_send_data <- replicateM(replicateM(mkGFIFOF(True, True)));
+    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) ew_request_space <- replicateM(replicateM(mkPipelineFIFOF));
+    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) we_request_space <- replicateM(replicateM(mkPipelineFIFOF));
     Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) ew_send_space <- replicateM(replicateM(mkGFIFOF(False, True)));
     Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) we_send_space <- replicateM(replicateM(mkGFIFOF(False, True)));
     Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) ew_send_dealloc <- replicateM(replicateM(mkGFIFOF(False, True)));
     Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) we_send_dealloc <- replicateM(replicateM(mkGFIFOF(False, True)));
-    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) ew_send_update_pointer <- replicateM(replicateM(mkGFIFOF(False, True)));
-    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) we_send_update_pointer <- replicateM(replicateM(mkGFIFOF(False, True)));
+    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) ew_send_update_pointer <- replicateM(replicateM(mkGFIFOF(True, True)));
+    Vector#(NUM_PMUS, Vector#(TAdd#(NUM_PMUS, 1), FIFOF#(MessageType))) we_send_update_pointer <- replicateM(replicateM(mkGFIFOF(True, True)));
     // Instantiate the PMUs
     Vector#(NUM_PMUS, Vector#(NUM_PMUS, PMU_IFC)) pmus;
 
