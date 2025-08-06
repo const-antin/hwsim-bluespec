@@ -331,7 +331,11 @@ module mkPMU#(
             end
             num_stored_to_current_frame <= 1;
             next_free_set <= tagged Invalid;
-            new_loc = tagged Valid StorageAddr { set: next_free_set.Valid.set, frame: 1, x: next_free_set.Valid.x, y: next_free_set.Valid.y };
+            if (fromInteger(valueOf(FRAMES_PER_SET)) > 1) begin
+                new_loc = tagged Valid StorageAddr { set: next_free_set.Valid.set, frame: 1, x: next_free_set.Valid.x, y: next_free_set.Valid.y };
+            end else begin
+                new_loc = tagged Invalid;
+            end
         end else begin
             set = curr_loc.Valid.set;
             frame = curr_loc.Valid.frame;

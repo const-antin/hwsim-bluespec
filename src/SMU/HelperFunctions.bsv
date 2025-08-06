@@ -133,7 +133,7 @@ function Int#(33) abs(Int#(33) x);
 endfunction
 
 // Create a function to convert set and frame to index
-function Bit#(TLog#(MAX_ENTRIES)) storageToIndex(UInt#(TLog#(SETS)) set, UInt#(TLog#(FRAMES_PER_SET)) frame);
+function Bit#(TLog#(MAX_ENTRIES)) storageToIndex(UInt#(TLog#(SETS)) set, FRAME_INDEX frame);
     return zeroExtend(unpack(pack(set))) * fromInteger(valueOf(FRAMES_PER_SET)) + zeroExtend(unpack(pack(frame)));
 endfunction
 

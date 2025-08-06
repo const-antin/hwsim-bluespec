@@ -168,7 +168,7 @@ typedef UInt#(TLog#(NUM_PMUS)) CoordType;
 
 typedef struct {
     UInt#(TLog#(SETS)) set;
-    UInt#(TLog#(FRAMES_PER_SET)) frame;
+    FRAME_INDEX frame;
     CoordType x;
     CoordType y;
 } StorageAddr deriving(Bits, Eq, FShow);
