@@ -3,6 +3,7 @@ package HelperFunctions;
 import Types::*;
 import Parameters::*;
 import Vector::*;
+import FIFOF::*;
 
 // ============================================================================
 // Helper Functions
@@ -153,6 +154,19 @@ function Maybe#(Bit#(2)) roundRobinFind(Bit#(32) start, Vector#(4, Bool) ready);
         end
     end
     return return_val;
+endfunction
+
+function Bool notEmpty(FIFOF#(MessageType) x) = x.notEmpty;
+function Bool notEmptyNotFull(Tuple2#(FIFOF#(MessageType), FIFOF#(MessageType)) x) = tpl_1(x).notEmpty && tpl_2(x).notFull;
+
+function Bool canSendInDirection(Int#(32) i, Coords c);
+    case (i)
+        0: return c.y > 0;
+        1: return c.y < fromInteger(valueOf(NUM_PMUS) - 1);
+        2: return c.x > 0;
+        3: return c.x < fromInteger(valueOf(NUM_PMUS) - 1);
+        default: return False;
+    endcase
 endfunction
 
 endpackage

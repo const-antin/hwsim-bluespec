@@ -169,8 +169,7 @@ typedef UInt#(TLog#(NUM_PMUS)) CoordType;
 typedef struct {
     UInt#(TLog#(SETS)) set;
     FRAME_INDEX frame;
-    CoordType x;
-    CoordType y;
+    Coords coords;
 } StorageAddr deriving(Bits, Eq, FShow);
 
 
@@ -191,7 +190,7 @@ typedef enum {
 typedef struct {
     CoordType x;
     CoordType y;
-} Coords deriving(Bits, Eq);
+} Coords deriving(Bits, Eq, FShow);
 
 typedef struct {
     TaggedTile data;
