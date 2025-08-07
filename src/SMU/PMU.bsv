@@ -4,9 +4,10 @@
 // TODO: Remove memory size dependency on tile size, should just have banks be as large as possible
 // TODO: Swap registers for SRAM
 // TODO: rank shouldnt be a parameter, should be stored in a reg and parsed from a config input
-// TODO: Technically having the entry ports to be guarded might be a problem, because if I want to enqueue only in one direction, but another blocks, thats wrong. SOLVE THIS****
 // TODO: Fair aribitration between directions data is sent, currently prioritizes north, then south, then west, then east.
 // TODO: Tag pmus as bufferizes and dont store to neighbors if theyre also a bufferize
+
+`include "Macros.bsv"
 
 package PMU;
 
@@ -147,22 +148,7 @@ module mkPMU#(
         deallocate_reg <= tagged Invalid;
     endrule
 
-    rule space_request_no_0 (initialized &&& (!isValid(next_free_set) || space_request_in_flight || (isValid(next_free_set) &&& (next_free_set.Valid.x != coords.x || next_free_set.Valid.y != coords.y))));
-        receive_request_space[0].deq;
-        send_space[0].enq(tagged Tag_FreeSpaceNo);
-    endrule
-    rule space_request_no_1 (initialized &&& (!isValid(next_free_set) || space_request_in_flight || (isValid(next_free_set) &&& (next_free_set.Valid.x != coords.x || next_free_set.Valid.y != coords.y))));
-        receive_request_space[1].deq;
-        send_space[1].enq(tagged Tag_FreeSpaceNo);
-    endrule
-    rule space_request_no_2 (initialized &&& (!isValid(next_free_set) || space_request_in_flight || (isValid(next_free_set) &&& (next_free_set.Valid.x != coords.x || next_free_set.Valid.y != coords.y))));
-        receive_request_space[2].deq;
-        send_space[2].enq(tagged Tag_FreeSpaceNo);
-    endrule
-    rule space_request_no_3 (initialized &&& (!isValid(next_free_set) || space_request_in_flight || (isValid(next_free_set) &&& (next_free_set.Valid.x != coords.x || next_free_set.Valid.y != coords.y))));
-        receive_request_space[3].deq;
-        send_space[3].enq(tagged Tag_FreeSpaceNo);
-    endrule
+    `UNROLL_4(RULE_SPACE_REQUEST_NO)
 
     rule round_robin_space_request (initialized &&& isValid(next_free_set) &&& next_free_set.Valid.x == coords.x &&& next_free_set.Valid.y == coords.y);
         function notEmptyNotFull(x) = tpl_1(x).notEmpty && tpl_2(x).notFull;
@@ -220,26 +206,7 @@ module mkPMU#(
             num_yesses <= num_yesses + num_yesses_temp;
         end
     endrule
-    rule send_dealloc0;
-        if (dealloc_wire[0] matches tagged Valid .loc) begin
-            send_dealloc[0].enq(tagged Tag_Deallocate dealloc_wire[0].Valid);
-        end
-    endrule
-    rule send_dealloc1;
-        if (dealloc_wire[1] matches tagged Valid .loc) begin
-            send_dealloc[1].enq(tagged Tag_Deallocate dealloc_wire[1].Valid);
-        end
-    endrule
-    rule send_dealloc2;
-        if (dealloc_wire[2] matches tagged Valid .loc) begin
-            send_dealloc[2].enq(tagged Tag_Deallocate dealloc_wire[2].Valid);
-        end
-    endrule
-    rule send_dealloc3;
-        if (dealloc_wire[3] matches tagged Valid .loc) begin
-            send_dealloc[3].enq(tagged Tag_Deallocate dealloc_wire[3].Valid);
-        end
-    endrule
+    `UNROLL_4(RULE_SEND_DEALLOC_NO)
 
     rule next_free (initialized && !isValid(next_free_set) && !space_request_in_flight);
         let mset <- free_list.allocSet();
@@ -276,18 +243,7 @@ module mkPMU#(
             end
         endcase
     endrule
-    rule next_free_0 (send_request_space_wire[0]);
-        request_space[0].enq(tagged Tag_EndToken 0);
-    endrule
-    rule next_free_1 (send_request_space_wire[1]);
-        request_space[1].enq(tagged Tag_EndToken 0);
-    endrule
-    rule next_free_2 (send_request_space_wire[2]);
-        request_space[2].enq(tagged Tag_EndToken 0);
-    endrule
-    rule next_free_3 (send_request_space_wire[3]);
-        request_space[3].enq(tagged Tag_EndToken 0);
-    endrule
+    `UNROLL_4(RULE_NEXT_FREE)
 
     rule receive_send_data (initialized);
         function notEmptyAndStore(x) = x.notEmpty &&& (x.first matches tagged Tag_Store .d ? True : False);
