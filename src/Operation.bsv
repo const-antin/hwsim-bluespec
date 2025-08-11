@@ -53,6 +53,7 @@ module mkAccum#(function Tile func (Tile tile, Tile tile2), Int#(32) rank) (Oper
     endmethod
 endmodule
 
+(* synthesize *)
 module mkRepeatStatic#(Int#(32) num_repeats) (Operation_IFC);
     FIFOF#(ChannelMessage) input_fifo <- mkFIFOF;
     FIFO#(ChannelMessage) output_fifo <- mkFIFO;
@@ -99,7 +100,8 @@ module mkRepeatStatic#(Int#(32) num_repeats) (Operation_IFC);
     endmethod
 endmodule
 
-module mkBroadcast2 (Operation_IFC);
+(* synthesize *)
+module mkBroadcast#(Int#(32) degree) (Operation_IFC);
     let output_fifo1 <- mkFIFO;
     let output_fifo2 <- mkFIFO;
 
@@ -109,6 +111,8 @@ module mkBroadcast2 (Operation_IFC);
     endmethod
 
     method ActionValue#(ChannelMessage) get(Int#(32) output_port);
+        $error("Broadcast: Not implemented yet.");
+        $finish(-1);
         if (output_port == 0) begin
             output_fifo1.deq;
             return output_fifo1.first;
@@ -116,6 +120,45 @@ module mkBroadcast2 (Operation_IFC);
             output_fifo2.deq;
             return output_fifo2.first;
         end
+    endmethod
+endmodule
+
+(* synthesize *)
+module mkFlatten#(Int#(32) rank) (Operation_IFC);
+    FIFO#(ChannelMessage) input_fifo <- mkFIFO;
+    FIFO#(ChannelMessage) output_fifo <- mkFIFO;
+
+
+    rule do_flatten;
+        let cur = input_fifo.first;
+        input_fifo.deq;
+        
+        if (cur matches tagged Tag_Data .current) begin
+            let data = tpl_1(current);
+            let st = tpl_2(current);
+            
+            StopToken out_st;
+            if (st == rank) begin
+                out_st = 0;
+            end else if (st > rank) begin
+                out_st = st - 1;
+            end else begin
+                out_st = st;
+            end
+            
+            output_fifo.enq(tagged Tag_Data tuple2(data, out_st));
+        end else if (cur matches tagged Tag_EndToken) begin
+            output_fifo.enq(cur);
+        end
+    endrule
+
+    method Action put(Int#(32) input_port, ChannelMessage msg);
+        input_fifo.enq(msg);
+    endmethod
+
+    method ActionValue#(ChannelMessage) get(Int#(32) output_port);
+        output_fifo.deq;
+        return output_fifo.first;
     endmethod
 endmodule
 
@@ -184,6 +227,7 @@ module mkBinaryMap#(Int#(32) id, function Tile func (Tile tile, Tile tile2)) (Op
     endmethod
 endmodule
 
+(* synthesize *)
 module mkPromote#(Int#(32) rank) (Operation_IFC);
     FIFO#(ChannelMessage) input_fifo <- mkFIFO;
     FIFO#(ChannelMessage) output_fifo <- mkFIFO;
@@ -202,6 +246,21 @@ module mkPromote#(Int#(32) rank) (Operation_IFC);
         end
     endrule
 
+    method Action put(Int#(32) input_port, ChannelMessage msg);
+        input_fifo.enq(msg);
+    endmethod
+
+    method ActionValue#(ChannelMessage) get(Int#(32) output_port);
+        output_fifo.deq;
+        return output_fifo.first;
+    endmethod
+endmodule
+
+(* synthesize *)
+module mkPartition#(Int#(32) rank, Int#(32) num_outputs) (Operation_IFC);
+    FIFO#(ChannelMessage) input_fifo <- mkFIFO;
+    FIFO#(ChannelMessage) output_fifo <- mkFIFO;
+    
     method Action put(Int#(32) input_port, ChannelMessage msg);
         input_fifo.enq(msg);
     endmethod
@@ -309,7 +368,8 @@ module mkTileReader#(Integer num_entries, String filename, Bit#(8) port_id, Ramu
     endmethod
 endmodule
 
-module mkPrinter#(String name) (Operation_IFC);
+(* synthesize *)
+module mkPrinter#(parameter String name) (Operation_IFC);
     FIFO#(ChannelMessage) input_fifo <- mkFIFO;
     Reg#(Int#(64)) cc <- mkReg(0);
 
@@ -339,76 +399,80 @@ module mkPrinter#(String name) (Operation_IFC);
     endmethod
 endmodule
 
-module mkTop(Empty);
-    let m1 <- mkBinaryMap(1, matmul_t_tile);
-    let m2 <- mkBinaryMap(2, matmul_t_tile);
+(* synthesize *)
+module mkSelectGen#(parameter String name) (Operation_IFC);
+    FIFO#(ChannelMessage) input_fifo <- mkFIFO;
+    FIFO#(ChannelMessage) output_fifo <- mkFIFO;
 
-    let a1 <- mkAccum(add_tile, 1);
-    let a2 <- mkAccum(add_tile, 1);
+    method Action put(Int#(32) input_port, ChannelMessage msg);
+        input_fifo.enq(msg);
+    endmethod
 
-    let m3 <- mkBinaryMap(3, mul_tile);
-    let m4 <- mkUnaryMap(silu_tile);
+    method ActionValue#(ChannelMessage) get(Int#(32) output_port);
+        let msg = output_fifo.first;
+        output_fifo.deq;
+        return msg;
+    endmethod
+endmodule 
 
-    let p5 <- mkPromote(0);
+(* synthesize *)
+module mkReshape#(int in_dim, int out_dim) (Operation_IFC);
+    FIFO#(ChannelMessage) input_fifo <- mkFIFO;
+    FIFO#(ChannelMessage) output_fifo <- mkFIFO;
 
-    let m6 <- mkBinaryMap(4, matmul_t_tile);
-    let a7 <- mkAccum(add_tile, 1);
+    method Action put(Int#(32) input_port, ChannelMessage msg);
+        input_fifo.enq(msg);
+    endmethod
 
-    rule stimulus;
-        let tile = 5;
-        let msg = tagged Tag_Data tuple2(tagged Tag_Tile tile, 5);
-        m1.put(0, msg);
-        m1.put(1, msg);
-        m2.put(0, msg);
-        m2.put(1, msg);
-        m6.put(1, msg);
-    endrule
+    method ActionValue#(ChannelMessage) get(Int#(32) output_port);
+        output_fifo.deq;
+        return output_fifo.first;
+    endmethod
+endmodule
 
-    rule pass_m1;
-        let msg <- m1.get(0);
-        a1.put(0, msg);
-    endrule
+(* synthesize *)
+module mkDynOffChipLoad#(parameter String addr, Bool pred) (Operation_IFC);
+    FIFO#(ChannelMessage) input_fifo <- mkFIFO;
+    FIFO#(ChannelMessage) output_fifo <- mkFIFO;
 
-    rule pass_m2;
-        let msg <- m2.get(0);
-        a2.put(0, msg);
-    endrule
+    method Action put(Int#(32) input_port, ChannelMessage msg);
+        input_fifo.enq(msg);
+    endmethod
 
-    rule pass_a1;
-        let msg <- a1.get(0);
-        m3.put(0, msg);
-    endrule
+    method ActionValue#(ChannelMessage) get(Int#(32) output_port);
+        output_fifo.deq;
+        return output_fifo.first;
+    endmethod
+endmodule
 
-    rule pass_a2;
-        let msg <- a2.get(0);
-        m4.put(0, msg);
-    endrule
+(* synthesize *)
+module mkTiledRetileStreamify#(Int#(32) repeats, Bool filter_mask, Bool split_row) (Operation_IFC);
+    FIFO#(ChannelMessage) input_fifo <- mkFIFO;
+    FIFO#(ChannelMessage) output_fifo <- mkFIFO;
 
-    rule pass_m4;
-        let msg <- m4.get(0);
-        m3.put(1, msg);
-    endrule
+    method Action put(Int#(32) input_port, ChannelMessage msg);
+        input_fifo.enq(msg);
+    endmethod
 
-    rule pass_m3;
-        let msg <- m3.get(0);
-        p5.put(0, msg);
-    endrule
+    method ActionValue#(ChannelMessage) get(Int#(32) output_port);
+        output_fifo.deq;
+        return output_fifo.first;
+    endmethod
+endmodule
 
-    rule pass_p5;
-        let msg <- p5.get(0);
-        m6.put(0, msg);
-    endrule
+(* synthesize *)
+module mkReassemble#(Int#(32) num_inputs) (Operation_IFC);
+    FIFO#(ChannelMessage) input_fifo <- mkFIFO;
+    FIFO#(ChannelMessage) output_fifo <- mkFIFO;
 
-    rule pass_m6;
-        let msg <- m6.get(0);
-        a7.put(0, msg);
-    endrule
+    method Action put(Int#(32) input_port, ChannelMessage msg);
+        input_fifo.enq(msg);
+    endmethod
 
-    rule drain;
-        let msg <- a7.get(0);
-        $display("Message: %s", fshow(msg));
-        $finish;
-    endrule
+    method ActionValue#(ChannelMessage) get(Int#(32) output_port);
+        output_fifo.deq;
+        return output_fifo.first;
+    endmethod
 endmodule
 
 endpackage

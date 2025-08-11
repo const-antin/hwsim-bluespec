@@ -124,6 +124,10 @@ function Tile silu_tile(Tile a);
     return unpack(v);
 endfunction
 
+function Tile retile_row_tile(Tile a, Tile b);
+    return a;
+endfunction
+
 /*
 function Tile matmul_tile (Tile a, Tile b);
     Tile result = replicate(replicate(0));
@@ -140,7 +144,6 @@ endfunction
 
 typedef Bit#(32) Ref_Inner;
 typedef Tuple2#(Ref_Inner, Bool) Ref; // Reference, deallocate
-typedef Bit#(0) EndToken;
 
 typedef struct {
     Tile t;
@@ -163,7 +166,7 @@ typedef struct {
 typedef union tagged {
     Tuple2#(Data, StopToken) Tag_Data;
     Instruction_Ptr Tag_Instruction;
-    EndToken Tag_EndToken;
+    void Tag_EndToken;
 } ChannelMessage deriving (Bits, FShow);
 
 endpackage
