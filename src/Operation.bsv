@@ -7,6 +7,7 @@ import Assert::*;
 import Types::*;
 import FileReader::*;
 import RamulatorArbiter::*;
+import StmtFSM::*;
 
 interface Operation_IFC;
     method Action put(Int#(32) input_port, ChannelMessage msg);
@@ -100,27 +101,33 @@ module mkRepeatStatic#(Int#(32) num_repeats) (Operation_IFC);
     endmethod
 endmodule
 
-(* synthesize *)
-module mkBroadcast#(Int#(32) degree) (Operation_IFC);
-    let output_fifo1 <- mkFIFO;
-    let output_fifo2 <- mkFIFO;
+interface Broadcast_IFC#(numeric type degree);
+    interface Operation_IFC op;
+endinterface
 
+module mkBroadcast#(Integer degree) (Broadcast_IFC#(degree));
+    Vector#(degree, FIFO#(ChannelMessage)) output_fifos <- replicateM(mkFIFO);
+
+    interface Operation_IFC op;
     method Action put(Int#(32) input_port, ChannelMessage msg);
-        output_fifo1.enq(msg);
-        output_fifo2.enq(msg);
+        for (Integer i = 0; i < degree; i = i + 1) begin
+            output_fifos[i].enq(msg);
+        end
     endmethod
 
     method ActionValue#(ChannelMessage) get(Int#(32) output_port);
-        $error("Broadcast: Not implemented yet.");
-        $finish(-1);
-        if (output_port == 0) begin
-            output_fifo1.deq;
-            return output_fifo1.first;
+        ChannelMessage ret;
+        if (output_port < fromInteger(degree)) begin
+            output_fifos[output_port].deq;
+            ret = output_fifos[output_port].first;
         end else begin
-            output_fifo2.deq;
-            return output_fifo2.first;
-        end
+            $display("Error: Invalid output port %d for broadcast with degree %d", output_port, degree);
+            $finish(-1);
+            ret = tagged Tag_EndToken; // This is just to satisfy the return type, it will never be used.
+        end 
+        return ret;
     endmethod
+    endinterface
 endmodule
 
 (* synthesize *)
@@ -475,4 +482,29 @@ module mkReassemble#(Int#(32) num_inputs) (Operation_IFC);
     endmethod
 endmodule
 
+module mkBroadcastTest (Empty);
+    Broadcast_IFC#(5) bc <- mkBroadcast(5);
+
+    Reg#(Int#(32)) i <- mkReg(0);
+
+    let fsm <- mkAutoFSM(
+        par
+        action
+            bc.op.put(0, tagged Tag_Data tuple2(tagged Tag_Tile unpack(0), 0));
+            $display("Put tile with ref 0");
+        endaction 
+        for (i <= 0; i < 5; i <= i + 1) 
+            action
+                let t <- bc.op.get(i);
+                if (t matches tagged Tag_Data .td &&& tpl_2(td) == 0) begin
+                    $display("Received tile with ref 0 from port %d", i);
+                end else begin
+                    $display("Error: Expected tile with ref 0, got %s", fshow(t));
+                    $finish(-1);
+                end 
+            endaction
+        endpar
+    );
+
+endmodule
 endpackage
