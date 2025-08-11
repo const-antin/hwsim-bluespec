@@ -88,7 +88,7 @@ module mkPMU#(
     Reg#(Bool) seen_yes <- mkReg(False);
     Reg#(Int#(32)) num_responses_received <- mkReg(0);
     Reg#(Int#(32)) num_space_requests_in_flight <- mkReg(0);
-    Reg#(Bool) data_request_in_flight <- mkReg(False);
+    ConfigReg#(Bool) data_request_in_flight <- mkConfigReg(False);
 
     // Round robin counters
     Reg#(Bit#(32)) space_round_robin_counter <- mkReg(0);
@@ -107,6 +107,8 @@ module mkPMU#(
     Wire#(Maybe#(Bit#(2))) store_direction <- mkDWire(tagged Invalid);
     Vector#(4, Wire#(Maybe#(StorageAddr))) dealloc_wire <- replicateM(mkDWire(tagged Invalid));
     Wire#(Maybe#(Tuple2#(Data, StopToken))) receive_send_data_output <- mkDWire(tagged Invalid);
+    Wire#(Maybe#(Tuple2#(RequestStorageAddr, Bit#(2)))) receive_request_data_dequeued_wire <- mkDWire(tagged Invalid);
+    ConfigReg#(Maybe#(Tuple2#(RequestStorageAddr, Bit#(2)))) receive_request_data_reg <- mkConfigReg(tagged Invalid);
 
 
     // ============================================================================
@@ -116,6 +118,7 @@ module mkPMU#(
     (* execution_order = "round_robin_space_request, receive_send_space, store_tile, next_free" *)
     (* execution_order = "start_load_tile, receive_send_data" *)
     (* execution_order = "receive_deallocate, receive_request_data, next_free" *)
+    (* execution_order = "receive_request_data_do_work, next_free" *)
     (* execution_order = "receive_send_update_pointer, receive_send_data" *)
     (* execution_order = "receive_send_update_pointer, store_tile" *)
     (* execution_order = "receive_send_space, round_robin_space_request_enact, next_free" *)
@@ -125,7 +128,6 @@ module mkPMU#(
     (* descending_urgency = "store_tile, receive_send_data" *)
     (* descending_urgency = "store_tile, receive_request_data, receive_request_data_enq" *)
     (* descending_urgency = "space_request_no_0, space_request_no_1, space_request_no_2, space_request_no_3, round_robin_space_request" *)
-    (* conflict_free = "receive_send_data, start_load_end_token" *)
     (* conflict_free = "receive_send_data, continue_load_tile" *)
     (* conflict_free = "receive_send_data_enq, continue_load_tile" *)
     (* mutually_exclusive = "space_request_no_0, round_robin_space_request_enact" *)
@@ -213,9 +215,9 @@ module mkPMU#(
     endrule
 
     rule receive_send_data (initialized);
-        function notEmptyAndStore(x) = x.notEmpty &&& (x.first matches tagged Tag_Store .d ? True : False);
+        function notEmptyAndStore(x) = x.notEmpty &&& isStore(x.first);
         Vector#(4, Bool) has_store_data = map(notEmptyAndStore, receive_send_data);
-        function notEmptyAndLoad(x) = data_out.notFull &&& data_request_in_flight &&& x.fst.notEmpty &&& (x.fst.first matches tagged Tag_Load .d ? True : False) &&& !x.snd;
+        function notEmptyAndLoad(x) = data_out.notFull &&& data_request_in_flight &&& x.fst.notEmpty &&& isLoad(x.fst.first) &&& !x.snd;
         Vector#(4, Bool) has_load_data = map(notEmptyAndLoad, zip(receive_send_data, has_store_data));
 
         Maybe#(Bit#(2)) m_idx = roundRobinFind(receive_send_data_round_robin_counter_store, has_store_data);
@@ -238,10 +240,14 @@ module mkPMU#(
             receive_send_data[idx].deq;
             let data_with_next = receive_send_data[idx].first.Tag_Load;
             let data = data_with_next.data;
+            let loc = data_with_next.loc;
             let next = data_with_next.next;
-            data_request_in_flight <= False;
             let out_rank = !isValid(next) ? rank + load_token.Valid.st : data.st;
-            load_token  <= !isValid(next) ? tagged Invalid             : tagged Valid LoadState { loc: next.Valid, deallocate: load_token.Valid.deallocate, st: load_token.Valid.st, orig_token: load_token.Valid.orig_token };
+            Bool send_next_request = isValid(next) && next.Valid.set != loc.set; // auto loading next frame means we dont need to request the next frame
+            if (send_next_request || !isValid(next)) begin
+                data_request_in_flight <= False; // if we need to send the next request, or no next exists, then the data is no longer in flight
+            end
+            load_token <= !send_next_request ? tagged Invalid : tagged Valid LoadState { loc: next.Valid, deallocate: load_token.Valid.deallocate, st: load_token.Valid.st, orig_token: load_token.Valid.orig_token };
             receive_send_data_output <= tagged Valid tuple2(tagged Tag_Tile data.t, out_rank);
             receive_send_data_round_robin_counter_load <= (zeroExtend(idx) + 1) % 4;
         end
@@ -255,15 +261,27 @@ module mkPMU#(
         Maybe#(Bit#(2)) m_idx = roundRobinFind(receive_request_data_round_robin_counter, has_data);
         if (m_idx matches tagged Valid .idx) begin
             receive_request_data[idx].deq;
-            let req = receive_request_data[idx].first.Tag_Request_Data;
-            let loc = req.loc;
-            let tile = mem.read(loc.set, loc.frame);
-            let next = next_table[storageAddrToIndex(loc)];
-            if (req.deallocate &&& (!isValid(next) || loc.set != next.Valid.set)) begin
-                free_list.freeSet(loc.set); 
-            end
-            receive_request_data_send_data <= tagged Valid tuple2(DataWithNext { data: tile, loc: loc, next: next }, idx);
+            receive_request_data_dequeued_wire <= tagged Valid tuple2(receive_request_data[idx].first.Tag_Request_Data, idx);
             receive_request_data_round_robin_counter <= (zeroExtend(idx) + 1) % 4;
+        end
+    endrule
+    rule receive_request_data_do_work (isValid(receive_request_data_dequeued_wire) || isValid(receive_request_data_reg));
+        let req_tuple = isValid(receive_request_data_dequeued_wire) ? receive_request_data_dequeued_wire.Valid : receive_request_data_reg.Valid;
+        let req = tpl_1(req_tuple);
+        let idx = tpl_2(req_tuple);
+        let loc = req.loc;
+        let tile = mem.read(loc.set, loc.frame);
+        let next = next_table[storageAddrToIndex(loc)];
+        if (req.deallocate &&& (!isValid(next) || loc.set != next.Valid.set)) begin
+            free_list.freeSet(loc.set); 
+        end
+        // send data back
+        receive_request_data_send_data <= tagged Valid tuple2(DataWithNext { data: tile, loc: loc, next: next }, idx);
+        // Update register for next cycle (only if we have a next location to process)
+        if (isValid(next) && next.Valid.set == loc.set) begin
+            receive_request_data_reg <= tagged Valid tuple2(RequestStorageAddr {loc: next.Valid, deallocate: req.deallocate}, idx);
+        end else begin
+            receive_request_data_reg <= tagged Invalid;
         end
     endrule
     rule receive_request_data_enq (receive_request_data_send_data matches tagged Valid .data_with_next);
@@ -294,12 +312,8 @@ module mkPMU#(
         SET_INDEX set =     isValid(curr_loc) ? curr_loc.Valid.set    : next_free_set.Valid.set;
         FRAME_INDEX frame = isValid(curr_loc) ? curr_loc.Valid.frame  : 0;
         Bool curr_coords_local = new_coords == coords;
-        Bool send_to_neighbor_if_needed = True;
-
-        if (!curr_coords_local) begin
-            let neighbor_dir = getNeighborDirection(coords, new_coords);
-            send_to_neighbor_if_needed = send_data[directionToIndex(neighbor_dir)].notFull;
-        end
+        let neighbor_dir = getNeighborDirection(coords, new_coords);
+        Bool send_to_neighbor_if_needed = curr_coords_local ? True : send_data[directionToIndex(neighbor_dir)].notFull;
 
         // only update state once we know that we can process the incoming data however appropriate
         if ((!emit_token || token_out.notFull) && can_update_neighbor_if_needed && send_to_neighbor_if_needed) begin
@@ -319,19 +333,16 @@ module mkPMU#(
             if (curr_coords_local) begin
                 usage_tracker.setFrame(set, zeroExtend(frame) + 1);
                 mem.write(set, frame, TaggedTile { t: tile, st: st });
+                next_table[storageAddrToIndex(p)] <= tagged Invalid;
             end else begin 
-                let neighbor_dir = getNeighborDirection(coords, new_coords);
                 send_data[directionToIndex(neighbor_dir)].enq(tagged Tag_Store DataWithNext {data: TaggedTile { t: tile, st: st }, loc: p, next: new_loc}); // this is unguarded
             end
 
             // update the storage location pointer chain
-            if (curr_coords_local) begin
-                next_table[storageAddrToIndex(p)] <= tagged Invalid;
-            end
             if (first_entry.sub(token_counter) matches tagged Invalid) begin
                 first_entry.upd(token_counter, tagged Valid p);
             end else begin
-                if (prev_coords_local && prev_stored != p) begin
+                if (prev_coords_local && prev_stored != p) begin // prev_stored != p is to prevent compiler complaint about 2 updates to same location in next_table
                     next_table[storageAddrToIndex(prev_stored)] <= tagged Valid p;
                 end
                 // update pointer chain
@@ -396,10 +407,8 @@ module mkPMU#(
                 end
                 
                 receive_send_data_output <= tagged Valid tuple2(tagged Tag_Tile tile.t, out_rank);
-                if (deallocate && coords == loc.coords) begin
-                    if (set != next_set) begin
-                        free_list.freeSet(set); 
-                    end 
+                if (deallocate && coords == loc.coords && set != next_set) begin
+                    free_list.freeSet(set); 
                 end
             end
 

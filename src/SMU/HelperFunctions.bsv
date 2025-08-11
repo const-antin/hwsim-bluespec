@@ -169,4 +169,7 @@ function Bool canSendInDirection(Int#(32) i, Coords c);
     endcase
 endfunction
 
+function Bool isStore(MessageType m) = (m matches tagged Tag_Store ._ ? True : False);
+function Bool isLoad (MessageType m) = (m matches tagged Tag_Load  ._ ? True : False);
+
 endpackage

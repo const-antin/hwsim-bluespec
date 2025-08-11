@@ -739,6 +739,12 @@ module mkTestPMUGrid2(Empty);
             tagged Tag_EndToken .et: begin
                 $display("[TESTBENCH] End token received");
                 $display("All tests completed at cycle %d", pmus[1][1].get_cycle_count());
+                if (valIndex1 != fromInteger(valueOf(NUM_TEST_VALUES2))) begin
+                    $display("[TESTBENCH] Not all values were processed in PMU 2");
+                end
+                if (valIndex0 != fromInteger(valueOf(NUM_TEST_VALUES1))) begin
+                    $display("[TESTBENCH] Not all values were processed in PMU 1");
+                end
                 // $finish(0);
             end
             default: begin
