@@ -19,5 +19,6 @@ typedef 4 SETS;
 typedef TLog#(SETS) SETS_LOG;
 typedef UInt#(SETS_LOG) SET_INDEX;
 typedef TMul#(FRAMES_PER_SET, SETS) MAX_ENTRIES;
+typedef Bit#(TLog#(MAX_ENTRIES)) TokID;
 
 endpackage

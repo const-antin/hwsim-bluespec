@@ -7,6 +7,7 @@ typedef Int#(32) StopToken;
 typedef Int#(32) Scalar;
 
 typedef 4 TILE_SIZE;
+typedef Bit#(2) Dir;
 typedef TMul#(TILE_SIZE, TILE_SIZE) TILE_SIZE_SQUARE;
 typedef Bit#(TMul#(TILE_SIZE, TMul#(TILE_SIZE, SizeOf#(Scalar)))) Tile;
 

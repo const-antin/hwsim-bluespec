@@ -23,7 +23,7 @@ endfunction
 // ============================================================================
 
 // Convert Direction to vector index
-function UInt#(2) directionToIndex(Direction dir);
+function Dir directionToIndex(Direction dir);
     case (dir) matches
         North: return 0;
         South: return 1;
@@ -31,6 +31,8 @@ function UInt#(2) directionToIndex(Direction dir);
         East:  return 3;
     endcase
 endfunction
+
+function Dir neighIdx(Coords me, Coords dst) = directionToIndex(getNeighborDirection(me, dst));
 
 // Convert vector index to Direction
 function Direction indexToDirection(UInt#(2) index);
@@ -143,11 +145,11 @@ function Bit#(TLog#(MAX_ENTRIES)) storageAddrToIndex(StorageAddr addr);
     return storageToIndex(addr.set, addr.frame);
 endfunction
 
-function Maybe#(Bit#(2)) roundRobinFind(Bit#(32) start, Vector#(4, Bool) ready);
-    Maybe#(Bit#(2)) return_val = tagged Invalid;
+function Maybe#(Dir) roundRobinFind(Dir start, Vector#(4, Bool) ready);
+    Maybe#(Dir) return_val = tagged Invalid;
     Bool found = False;
     for (Integer i = 0; i < 4; i = i + 1) begin
-        Bit#(2) idx = truncate((start + fromInteger(i)) % 4);
+        Dir idx = start + fromInteger(i);
         if (!found && ready[idx]) begin
             return_val = tagged Valid idx;
             found = True;

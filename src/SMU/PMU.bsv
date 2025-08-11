@@ -61,8 +61,8 @@ module mkPMU#(
     // initialization and cycle count
     Reg#(Bit#(32)) cycle_count <- mkReg(0);
     Reg#(Bool) initialized <- mkReg(False);
-    Reg#(Bit#(TLog#(MAX_ENTRIES))) first_entry_initialized_index <- mkReg(0);
-    ConfigReg#(Bit#(TLog#(MAX_ENTRIES))) token_counter <- mkConfigReg(0);
+    Reg#(TokID) first_entry_initialized_index <- mkReg(0);
+    ConfigReg#(TokID) token_counter <- mkConfigReg(0);
 
     // storage usage tracking
     BankedMemory_IFC mem <- mkBankedMemory;
@@ -74,14 +74,14 @@ module mkPMU#(
     ConfigReg#(Bit#(32)) num_stored_to_current_frame <- mkConfigReg(0);
 
     // storage chain logic
-    RegFile#(Bit#(TLog#(MAX_ENTRIES)), Maybe#(StorageAddr)) first_entry <- mkRegFileWCF(0, fromInteger(valueOf(MAX_ENTRIES) - 1));    
-    RegFile#(Bit#(TLog#(MAX_ENTRIES)), Bool) token_complete <- mkRegFileWCF(0, fromInteger(valueOf(MAX_ENTRIES) - 1));
+    RegFile#(TokID, Maybe#(StorageAddr)) first_entry <- mkRegFileWCF(0, fromInteger(valueOf(MAX_ENTRIES) - 1));    
+    RegFile#(TokID, Bool) token_complete <- mkRegFileWCF(0, fromInteger(valueOf(MAX_ENTRIES) - 1));
     Vector#(MAX_ENTRIES, ConfigReg#(Maybe#(StorageAddr))) next_table <- replicateM(mkConfigReg(tagged Invalid));
     Reg#(StorageAddr) prev_stored <- mkReg(StorageAddr { set: 0, frame: 0, coords: coords });
 
     // load and deallocate registers
     ConfigReg#(Maybe#(LoadState)) load_token <- mkConfigReg(tagged Invalid);
-    Wire#(Maybe#(Bit#(TLog#(MAX_ENTRIES)))) deallocate_reg <- mkDWire(tagged Invalid);
+    Wire#(Maybe#(TokID)) deallocate_reg <- mkDWire(tagged Invalid);
 
     // In flight trackers
     Reg#(Bool) space_request_in_flight <- mkReg(False);
@@ -91,24 +91,24 @@ module mkPMU#(
     ConfigReg#(Bool) data_request_in_flight <- mkConfigReg(False);
 
     // Round robin counters
-    Reg#(Bit#(32)) space_round_robin_counter <- mkReg(0);
-    Reg#(Bit#(32)) dealloc_round_robin_counter <- mkReg(0);
-    Reg#(Bit#(32)) receive_send_data_round_robin_counter_store <- mkReg(0);
-    Reg#(Bit#(32)) receive_send_data_round_robin_counter_load <- mkReg(0);
-    Reg#(Bit#(32)) receive_request_data_round_robin_counter <- mkReg(0);
-    Reg#(Bit#(32)) receive_send_update_pointer_round_robin_counter <- mkReg(0);
+    Reg#(Dir) space_round_robin_counter <- mkReg(0);
+    Reg#(Dir) dealloc_round_robin_counter <- mkReg(0);
+    Reg#(Dir) receive_send_data_round_robin_counter_store <- mkReg(0);
+    Reg#(Dir) receive_send_data_round_robin_counter_load <- mkReg(0);
+    Reg#(Dir) receive_request_data_round_robin_counter <- mkReg(0);
+    Reg#(Dir) receive_send_update_pointer_round_robin_counter <- mkReg(0);
 
     // directional selection wires
-    Wire#(Maybe#(Bit#(2))) request_space_wire <- mkDWire(tagged Invalid);
-    Wire#(Maybe#(Bit#(2))) receive_deallocate_wire <- mkDWire(tagged Invalid);
+    Wire#(Maybe#(Dir)) request_space_wire <- mkDWire(tagged Invalid);
+    Wire#(Maybe#(Dir)) receive_deallocate_wire <- mkDWire(tagged Invalid);
     Vector#(4, Reg#(Bool)) send_request_space_wire <- replicateM(mkDWire(False));
-    Wire#(Maybe#(Tuple2#(DataWithNext, Bit#(2)))) receive_request_data_send_data <- mkDWire(tagged Invalid);
-    Wire#(Maybe#(Tuple2#(UInt#(2), RequestStorageAddr))) continue_load_tile_request_data <- mkDWire(tagged Invalid);
-    Wire#(Maybe#(Bit#(2))) store_direction <- mkDWire(tagged Invalid);
+    Wire#(Maybe#(Tuple2#(DataWithNext, Dir))) receive_request_data_send_data <- mkDWire(tagged Invalid);
+    Wire#(Maybe#(Tuple2#(Dir, RequestStorageAddr))) continue_load_tile_request_data <- mkDWire(tagged Invalid);
+    Wire#(Maybe#(Dir)) store_direction <- mkDWire(tagged Invalid);
     Vector#(4, Wire#(Maybe#(StorageAddr))) dealloc_wire <- replicateM(mkDWire(tagged Invalid));
     Wire#(Maybe#(Tuple2#(Data, StopToken))) receive_send_data_output <- mkDWire(tagged Invalid);
-    Wire#(Maybe#(Tuple2#(RequestStorageAddr, Bit#(2)))) receive_request_data_dequeued_wire <- mkDWire(tagged Invalid);
-    ConfigReg#(Maybe#(Tuple2#(RequestStorageAddr, Bit#(2)))) receive_request_data_reg <- mkConfigReg(tagged Invalid);
+    Wire#(Maybe#(Tuple2#(RequestStorageAddr, Dir))) receive_request_data_dequeued_wire <- mkDWire(tagged Invalid);
+    ConfigReg#(Maybe#(Tuple2#(RequestStorageAddr, Dir))) receive_request_data_reg <- mkConfigReg(tagged Invalid);
 
 
     // ============================================================================
@@ -148,7 +148,7 @@ module mkPMU#(
         receive_request_space[idx].deq;
         send_space[idx].enq(tagged Tag_FreeSpaceYes StorageAddr { set: next_free_set.Valid.set, frame: 0, coords: coords });
         next_free_set <= tagged Invalid;
-        space_round_robin_counter <= (zeroExtend(idx) + 1) % 4;
+        space_round_robin_counter <= idx + 1;
     endrule
 
     rule receive_deallocate (initialized);
@@ -159,7 +159,7 @@ module mkPMU#(
         receive_send_dealloc[idx].deq;
         let loc = receive_send_dealloc[idx].first.Tag_Deallocate;
         free_list.freeSet(loc.set);
-        dealloc_round_robin_counter <= (zeroExtend(idx) + 1) % 4;
+        dealloc_round_robin_counter <= idx + 1;
     endrule
 
     rule receive_send_space (initialized && space_request_in_flight);
@@ -220,7 +220,7 @@ module mkPMU#(
         function notEmptyAndLoad(x) = data_out.notFull &&& data_request_in_flight &&& x.fst.notEmpty &&& isLoad(x.fst.first) &&& !x.snd;
         Vector#(4, Bool) has_load_data = map(notEmptyAndLoad, zip(receive_send_data, has_store_data));
 
-        Maybe#(Bit#(2)) m_idx = roundRobinFind(receive_send_data_round_robin_counter_store, has_store_data);
+        Maybe#(Dir) m_idx = roundRobinFind(receive_send_data_round_robin_counter_store, has_store_data);
         if (m_idx matches tagged Valid .idx) begin
             receive_send_data[idx].deq;
             let data_with_next = receive_send_data[idx].first.Tag_Store;
@@ -232,10 +232,10 @@ module mkPMU#(
                 next_table[storageAddrToIndex(old_loc)] <= tagged Valid loc;
             end
             next_table[storageAddrToIndex(loc)] <= tagged Invalid;
-            receive_send_data_round_robin_counter_store <= (zeroExtend(idx) + 1) % 4;
+            receive_send_data_round_robin_counter_store <= idx + 1;
         end
 
-        Maybe#(Bit#(2)) m_idx2 = roundRobinFind(receive_send_data_round_robin_counter_load, has_load_data);
+        Maybe#(Dir) m_idx2 = roundRobinFind(receive_send_data_round_robin_counter_load, has_load_data);
         if (m_idx2 matches tagged Valid .idx) begin
             receive_send_data[idx].deq;
             let data_with_next = receive_send_data[idx].first.Tag_Load;
@@ -249,7 +249,7 @@ module mkPMU#(
             end
             load_token <= !send_next_request ? tagged Invalid : tagged Valid LoadState { loc: next.Valid, deallocate: load_token.Valid.deallocate, st: load_token.Valid.st, orig_token: load_token.Valid.orig_token };
             receive_send_data_output <= tagged Valid tuple2(tagged Tag_Tile data.t, out_rank);
-            receive_send_data_round_robin_counter_load <= (zeroExtend(idx) + 1) % 4;
+            receive_send_data_round_robin_counter_load <= idx + 1;
         end
     endrule
     rule receive_send_data_enq (receive_send_data_output matches tagged Valid .out);
@@ -258,11 +258,11 @@ module mkPMU#(
 
     rule receive_request_data (initialized);
         Vector#(4, Bool) has_data = map(notEmptyNotFull, zip(receive_request_data, send_data));
-        Maybe#(Bit#(2)) m_idx = roundRobinFind(receive_request_data_round_robin_counter, has_data);
+        Maybe#(Dir) m_idx = roundRobinFind(receive_request_data_round_robin_counter, has_data);
         if (m_idx matches tagged Valid .idx) begin
             receive_request_data[idx].deq;
             receive_request_data_dequeued_wire <= tagged Valid tuple2(receive_request_data[idx].first.Tag_Request_Data, idx);
-            receive_request_data_round_robin_counter <= (zeroExtend(idx) + 1) % 4;
+            receive_request_data_round_robin_counter <= idx + 1;
         end
     endrule
     rule receive_request_data_do_work (isValid(receive_request_data_dequeued_wire) || isValid(receive_request_data_reg));
@@ -290,12 +290,12 @@ module mkPMU#(
 
     rule receive_send_update_pointer (initialized);
         Vector#(4, Bool) has_data = map(notEmpty, receive_send_update_pointer);
-        Maybe#(Bit#(2)) m_idx = roundRobinFind(receive_send_update_pointer_round_robin_counter, has_data);
+        Maybe#(Dir) m_idx = roundRobinFind(receive_send_update_pointer_round_robin_counter, has_data);
         if (m_idx matches tagged Valid .idx) begin
             receive_send_update_pointer[idx].deq;
             let upd = receive_send_update_pointer[idx].first.Tag_Update_Next_Table;
             next_table[storageAddrToIndex(upd.prev)] <= tagged Valid upd.next;
-            receive_send_update_pointer_round_robin_counter <= (zeroExtend(idx) + 1) % 4;
+            receive_send_update_pointer_round_robin_counter <= idx + 1;
         end
     endrule
 
@@ -306,14 +306,13 @@ module mkPMU#(
 
         Bool prev_coords_local = (prev_stored.coords == coords);
         Bool need_to_send_update_to_neighbor = isValid(first_entry.sub(token_counter)) && !prev_coords_local && prev_stored.frame == fromInteger(valueOf(FRAMES_PER_SET) - 1);
-        Bool can_update_neighbor_if_needed = !need_to_send_update_to_neighbor || send_update_pointer[directionToIndex(getNeighborDirection(coords, prev_stored.coords))].notFull;
+        Bool can_update_neighbor_if_needed = !need_to_send_update_to_neighbor || send_update_pointer[neighIdx(coords, prev_stored.coords)].notFull;
 
         Coords new_coords = isValid(curr_loc) ? curr_loc.Valid.coords : next_free_set.Valid.coords;
         SET_INDEX set =     isValid(curr_loc) ? curr_loc.Valid.set    : next_free_set.Valid.set;
         FRAME_INDEX frame = isValid(curr_loc) ? curr_loc.Valid.frame  : 0;
         Bool curr_coords_local = new_coords == coords;
-        let neighbor_dir = getNeighborDirection(coords, new_coords);
-        Bool send_to_neighbor_if_needed = curr_coords_local ? True : send_data[directionToIndex(neighbor_dir)].notFull;
+        Bool send_to_neighbor_if_needed = curr_coords_local ? True : send_data[neighIdx(coords, new_coords)].notFull;
 
         // only update state once we know that we can process the incoming data however appropriate
         if ((!emit_token || token_out.notFull) && can_update_neighbor_if_needed && send_to_neighbor_if_needed) begin
@@ -335,7 +334,7 @@ module mkPMU#(
                 mem.write(set, frame, TaggedTile { t: tile, st: st });
                 next_table[storageAddrToIndex(p)] <= tagged Invalid;
             end else begin 
-                send_data[directionToIndex(neighbor_dir)].enq(tagged Tag_Store DataWithNext {data: TaggedTile { t: tile, st: st }, loc: p, next: new_loc}); // this is unguarded
+                send_data[neighIdx(coords, new_coords)].enq(tagged Tag_Store DataWithNext {data: TaggedTile { t: tile, st: st }, loc: p, next: new_loc}); // this is unguarded
             end
 
             // update the storage location pointer chain
@@ -347,7 +346,7 @@ module mkPMU#(
                 end
                 // update pointer chain
                 if (!prev_coords_local && prev_stored.frame == fromInteger(valueOf(FRAMES_PER_SET) - 1)) begin
-                    send_update_pointer[directionToIndex(getNeighborDirection(coords, prev_stored.coords))].enq(tagged Tag_Update_Next_Table PrevToNextTag { prev: prev_stored, next: p }); // enq is unguarded
+                    send_update_pointer[neighIdx(coords, prev_stored.coords)].enq(tagged Tag_Update_Next_Table PrevToNextTag { prev: prev_stored, next: p }); // enq is unguarded
                 end 
             end
 
@@ -380,22 +379,21 @@ module mkPMU#(
         let orig_token = load_tk_val.orig_token;
 
         Bool token_is_complete = token_complete.sub(orig_token);
-        Bool has_next_piece = isValid(next_table[storageAddrToIndex(loc)]);
+        Maybe#(StorageAddr) has_next_piece = next_table[storageAddrToIndex(loc)]; // this isnt really relevant until FIFO
 
-        if (token_is_complete || has_next_piece) begin
+        if (token_is_complete || isValid(has_next_piece)) begin
             let set = loc.set;
-            let frame = loc.frame;
-            let dir = directionToIndex(getNeighborDirection(coords, loc.coords));
+            let dir = neighIdx(coords, loc.coords);
             if (coords != loc.coords && request_data[dir].notFull) begin
                 data_request_in_flight <= True;
                 continue_load_tile_request_data <= tagged Valid tuple2(dir, RequestStorageAddr { loc: loc, deallocate: deallocate });
             end else if (data_out.notFull) begin 
-                let tile = mem.read(set, frame);
+                let tile = mem.read(set, loc.frame);
                 let out_rank = tile.st;
 
                 // Check if weve processed all entries for this token
                 let next_set = set + 1;
-                if (next_table[storageAddrToIndex(loc)] matches tagged Valid .next_loc) begin
+                if (has_next_piece matches tagged Valid .next_loc) begin
                     next_set = next_loc.set;
                     load_token <= tagged Valid LoadState { loc: next_loc, deallocate: deallocate, st: st, orig_token: orig_token };
                 end else begin
@@ -488,17 +486,15 @@ module mkPMU#(
         data_in.enq(msg);
     endmethod
     method ActionValue#(ChannelMessage) get_token();
-        let msg = token_out.first;
         token_out.deq;
-        return msg;
+        return token_out.first;
     endmethod
     method Action put_token(ChannelMessage msg);
         token_in.enq(msg);
     endmethod
     method ActionValue#(ChannelMessage) get_data();
-        let msg = data_out.first;
         data_out.deq;
-        return msg;
+        return data_out.first;
     endmethod
     method Int#(32) get_cycle_count();
         return unpack(cycle_count);
