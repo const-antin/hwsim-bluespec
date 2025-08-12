@@ -1,85 +1,93 @@
 # ================================================================
-# BSV/Verilog build environment - Generic build infrastructure
-# 
-# This include file provides the core build system for Bluespec projects:
-# - Bluesim compilation and linking
-# - Verilog compilation and simulation
-# - Build directory management
-# - Cleanup targets
-# 
-# Project-specific configurations (DPI, custom flags, etc.) should be
-# defined in the main Makefile that includes this file.
+# BSV/Verilog build environment with optional BDPI support
+# FAST BUILD VERSION
 # ================================================================
-
 TUTORIAL ?= .
 RESOURCES_DIR ?= $(TUTORIAL)/res
 TOPLANG ?= BSV
-
-# Build directory structure
-BUILD_DIR = build
-B_SIM_BUILD_DIR = $(BUILD_DIR)/bluesim
-V_BUILD_DIR = $(BUILD_DIR)/verilog
-DPI_BUILD_DIR = $(BUILD_DIR)/dpi
-BIN_DIR = $(BUILD_DIR)/bin
-OBJ_DIR = $(BUILD_DIR)/obj
-
 ifeq ($(TOPLANG),BSV)
-  SRC_EXT=bsv
+SRC_EXT=bsv
 else ifeq ($(TOPLANG),BH)
-  SRC_EXT=bs
+SRC_EXT=bs
 else
-  SRC_EXT=TOPLANG_NOT_DEFINED
+SRC_EXT=TOPLANG_NOT_DEFINED
 endif
 
 TOPFILE ?= src/Top.$(SRC_EXT)
 TOPMODULE ?= mkTop
+NPROC := $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 
-BSC_COMP_FLAGS += -keep-fires -aggressive-conditions -no-warn-action-shadowing -check-assert -cpp \
-	+RTS -K2G -RTS -show-range-conflict -show-schedule -Xc "lm" -steps-max-intervals 10000000 -v -show-stats -sched-dot
+# ================================================================
+# BUILD MODE CONFIGURATIONS
+# ================================================================
 
-BSC_LINK_FLAGS += -keep-fires -Xc "lm" -show-stats
+# FASTEST MODE (for rapid iteration)
+BSC_COMP_FLAGS_FASTEST = -aggressive-conditions -no-warn-action-shadowing -show-range-conflict \
+	-parallel-sim-link $(NPROC) -cpp +RTS -K2G -RTS -Xc "lm" \
+	-steps-max-intervals 10000000
+
+BSC_LINK_FLAGS_FASTEST = -Xc "lm" -Xl "-fuse-ld=lld" +RTS -Ksize -RTS
+
+# FAST MODE (recommended for development)
+BSC_COMP_FLAGS_FAST = -keep-fires -aggressive-conditions -no-warn-action-shadowing \
+	-parallel-sim-link $(NPROC) -cpp +RTS -K2G -RTS -Xc "lm" \
+	-steps-max-intervals 10000000
+
+BSC_LINK_FLAGS_FAST = -keep-fires -Xc "lm" -Xl "-fuse-ld=lld" +RTS -Ksize -RTS
+
+# DEBUG MODE (your original flags - slow but full featured)
+BSC_COMP_FLAGS_DEBUG = -keep-fires -aggressive-conditions -no-warn-action-shadowing \
+	-check-assert -parallel-sim-link $(NPROC) -cpp +RTS -K2G -RTS \
+	-show-range-conflict -show-schedule -Xc "lm" -steps-max-intervals 10000000 \
+	-v -show-stats -sched-dot +RTS -Ksize -RTS
+
+BSC_LINK_FLAGS_DEBUG = -keep-fires -Xc "lm" -show-stats -Xl "-fuse-ld=lld" 
+
+# DEFAULT TO FAST MODE
+BSC_COMP_FLAGS ?= $(BSC_COMP_FLAGS_FAST)
+BSC_LINK_FLAGS ?= $(BSC_LINK_FLAGS_FAST)
+
 BSC_PATHS = -p $(BSC_PATH1)src:$(RESOURCES_DIR):+
-
 V_SIM ?= iverilog
 
 # ================================================================
-# BDPI Support (static object compilation)
+# QUICK BUILD TARGETS
+# ================================================================
 
-# Automatically generate object file list from source files
-BDPI_OBJ = $(patsubst dpi/%.c,build/obj/%.o,$(filter %.c,$(BDPI_C_SRC))) \
-           $(patsubst dpi/%.cpp,build/obj/%.o,$(filter %.cpp,$(BDPI_C_SRC)))
+.PHONY: lightning
+lightning: BSC_COMP_FLAGS = $(BSC_COMP_FLAGS_FASTEST) -v 
+lightning: BSC_LINK_FLAGS = $(BSC_LINK_FLAGS_FASTEST) -v 
+lightning: $(info === LIGHTNING MODE: Ultra-fast build ===)
+lightning: b_all
 
-ifeq ($(BDPI_C_SRC),)
-# No BDPI C source specified, do nothing
-else
-# Generic rule for .c files
-$(OBJ_DIR)/%.o: dpi/%.c
-	@echo Compiling $< to $@...
-	mkdir -p $(OBJ_DIR)
-	gcc -c $< -o $@
-	@echo Built: $@
+.PHONY: dev  
+dev: BSC_COMP_FLAGS = $(BSC_COMP_FLAGS_FAST)
+dev: BSC_LINK_FLAGS = $(BSC_LINK_FLAGS_FAST)
+dev: $(info === DEV MODE: Fast development build ===)
+dev: b_all
 
-# Generic rule for .cpp files (TODO: Ideally move the ramulator part into the outer file.)
-$(OBJ_DIR)/%.o: dpi/%.cpp
-	@echo Compiling $< to $@...
-	mkdir -p $(OBJ_DIR)
-	cd ramulator2/src && g++ -c ../../$< -I. -I../ext/spdlog/include -I../ext/yaml-cpp/include -std=c++17 -o ../../$@
-	@echo Built: $@
-endif
+.PHONY: debug
+debug: BSC_COMP_FLAGS = $(BSC_COMP_FLAGS_DEBUG)
+debug: BSC_LINK_FLAGS = $(BSC_LINK_FLAGS_DEBUG)
+debug: $(info === DEBUG MODE: Full debugging (slow) ===)
+debug: b_all
+
+# Make 'dev' the default
+.PHONY: default
+default: dev
 
 # ================================================================
 # Bluesim
-
-B_SIM_DIRS = -simdir $(B_SIM_BUILD_DIR) -bdir $(B_SIM_BUILD_DIR) -info-dir $(B_SIM_BUILD_DIR)
-B_SIM_EXE = $(BIN_DIR)/$(TOPMODULE)_b_sim
+# ================================================================
+B_SIM_DIRS = -simdir build_b_sim -bdir build_b_sim -info-dir build_b_sim
+B_SIM_EXE = $(TOPMODULE)_b_sim
 
 .PHONY: b_all
 b_all: b_compile b_link b_sim
 
 .PHONY: b_compile
 b_compile:
-	mkdir -p $(B_SIM_BUILD_DIR)
-	mkdir -p $(BIN_DIR)
+	mkdir -p build_b_sim
 	@echo Compiling for Bluesim ...
 	bsc -u -sim $(B_SIM_DIRS) $(BSC_COMP_FLAGS) $(BSC_PATHS) -g $(TOPMODULE) $(TOPFILE)
 	@echo Compiling for Bluesim finished
@@ -87,40 +95,58 @@ b_compile:
 .PHONY: b_link
 b_link: $(BDPI_OBJ)
 	@echo Linking for Bluesim ...
-	bsc -e $(TOPMODULE) -sim \
-		-o $(B_SIM_EXE) \
-		$(B_SIM_DIRS) \
-		$(BSC_LINK_FLAGS) \
-		$(BSC_PATHS) \
-		$(BDPI_OBJ)
+	bsc -e $(TOPMODULE) -sim -o $(B_SIM_EXE) $(B_SIM_DIRS) $(BSC_LINK_FLAGS) $(BSC_PATHS) $(BDPI_OBJ)
 	@echo Linking for Bluesim finished
 
 .PHONY: b_sim
 b_sim:
 	@echo Bluesim simulation ...
-	LD_LIBRARY_PATH=. $(B_SIM_EXE)
+	LD_LIBRARY_PATH=. ./$(B_SIM_EXE)
 	@echo Bluesim simulation finished
 
 .PHONY: b_sim_vcd
 b_sim_vcd:
-	@echo Bluesim simulation and dumping VCD in $(BUILD_DIR)/dump.vcd ...
-	LD_LIBRARY_PATH=. $(B_SIM_EXE) -V
-	@echo Bluesim simulation and dumping VCD in $(BUILD_DIR)/dump.vcd finished
+	@echo Bluesim simulation and dumping VCD in dump.vcd ...
+	LD_LIBRARY_PATH=. ./$(B_SIM_EXE) -V
+	@echo Bluesim simulation and dumping VCD in dump.vcd finished
+
+# ================================================================
+# CONVENIENCE TARGETS
+# ================================================================
+
+# Quick compile and run
+.PHONY: run
+run: dev
+
+# Ultra-quick test iteration
+.PHONY: test
+test: lightning
+
+# Build and run immediately  
+.PHONY: go
+go: lightning
+	@echo "Running simulation..."
+	LD_LIBRARY_PATH=. ./$(B_SIM_EXE)
+
+# Time the build to measure improvements
+.PHONY: time-build
+time-build:
+	@echo "Timing build..."
+	time $(MAKE) clean lightning
 
 # ================================================================
 # Verilog
-
-V_DIRS = -vdir $(V_BUILD_DIR)/rtl -bdir $(V_BUILD_DIR) -info-dir $(V_BUILD_DIR)
-V_SIM_EXE = $(BIN_DIR)/$(TOPMODULE)_v_sim
+# ================================================================
+V_DIRS = -vdir verilog_RTL -bdir build_v -info-dir build_v
+V_SIM_EXE = $(TOPMODULE)_v_sim
 
 .PHONY: v_all
 v_all: v_compile v_link v_sim
 
 .PHONY: v_compile
 v_compile:
-	mkdir -p $(V_BUILD_DIR)
-	mkdir -p $(V_BUILD_DIR)/rtl
-	mkdir -p $(BIN_DIR)
+	mkdir -p build_v
+	mkdir -p verilog_RTL
 	@echo Compiling for Verilog ...
 	bsc -u -verilog $(V_DIRS) $(BSC_COMP_FLAGS) $(BSC_PATHS) -g $(TOPMODULE) $(TOPFILE)
 	@echo Compiling for Verilog finished
@@ -128,43 +154,76 @@ v_compile:
 .PHONY: v_link
 v_link:
 	@echo Linking for Verilog sim ...
-	bsc -e $(TOPMODULE) -verilog -o $(V_SIM_EXE) $(V_DIRS) -vsim $(V_SIM) $(V_BUILD_DIR)/rtl/$(TOPMODULE).v
+	bsc -e $(TOPMODULE) -verilog -o ./$(V_SIM_EXE) $(V_DIRS) -vsim $(V_SIM) verilog_RTL/$(TOPMODULE).v
 	@echo Linking for Verilog sim finished
 
 .PHONY: v_sim
 v_sim:
 	@echo Verilog simulation...
-	$(V_SIM_EXE)
+	./$(V_SIM_EXE)
 	@echo Verilog simulation finished
 
 .PHONY: v_sim_vcd
 v_sim_vcd:
-	@echo Verilog simulation and dumping VCD in $(BUILD_DIR)/dump.vcd ...
-	$(V_SIM_EXE) +bscvcd
-	@echo Verilog simulation and dumping VCD in $(BUILD_DIR)/dump.vcd finished
+	@echo Verilog simulation and dumping VCD in dump.vcd ...
+	./$(V_SIM_EXE) +bscvcd
+	@echo Verilog simulation and dumping VCD in dump.vcd finished
 
-
+# ================================================================
+# BDPI Support (static object compilation)
+# ================================================================
+ifeq ($(BDPI_C_SRC),)
+# No BDPI C source specified, do nothing
+else
+$(BDPI_OBJ): $(BDPI_C_SRC)
+	@echo Compiling BDPI C source $(BDPI_C_SRC) to object $(BDPI_OBJ)...
+	gcc -c $(BDPI_C_SRC) -o $(BDPI_OBJ)
+	@echo BDPI object built: $(BDPI_OBJ)
+endif
 
 # ================================================================
 # Cleanup
-
+# ================================================================
 .PHONY: clean
 clean:
-	rm -f $(B_SIM_BUILD_DIR)/* $(V_BUILD_DIR)/* $(OBJ_DIR)/* *~ src/*~ $(BDPI_OBJ)
+	rm -f build_b_sim/* build_v/* *~ src/*~ $(BDPI_OBJ)
 
 .PHONY: full_clean
 full_clean:
-	rm -rf $(BUILD_DIR) *~ src/*~
-	rm -f *.vcd
+	rm -rf build_b_sim build_v verilog_RTL *~ src/*~ $(BDPI_OBJ)
+	rm -f *$(TOPMODULE)* *.vcd
 
-.PHONY: clean_build
-clean_build:
-	rm -rf $(BUILD_DIR)
-
-.PHONY: clean_bin
-clean_bin:
-	rm -rf $(BIN_DIR)
-
-.PHONY: clean_obj
-clean_obj:
-	rm -rf $(OBJ_DIR)
+# ================================================================
+# HELP
+# ================================================================
+.PHONY: help
+help:
+	@echo "Bluespec Build Targets (fastest to slowest):"
+	@echo ""
+	@echo "DEVELOPMENT (use these):"
+	@echo "  lightning    - Ultra-fast build (minimal features)"
+	@echo "  dev          - Fast development build (DEFAULT)"
+	@echo "  test         - Same as lightning"
+	@echo "  go           - Lightning build + run simulation"
+	@echo "  run          - Same as dev"
+	@echo ""
+	@echo "DEBUGGING:"
+	@echo "  debug        - Full debugging build (slow, all features)"
+	@echo ""  
+	@echo "ORIGINAL TARGETS:"
+	@echo "  b_all        - Full Bluesim build (uses current mode)"
+	@echo "  v_all        - Full Verilog build"
+	@echo "  b_sim        - Just run simulation"
+	@echo "  b_sim_vcd    - Run simulation with VCD dump"
+	@echo ""
+	@echo "UTILITIES:"
+	@echo "  time-build   - Time the build to measure performance"
+	@echo "  clean        - Clean build files"
+	@echo "  full_clean   - Clean everything"
+	@echo "  help         - Show this help"
+	@echo ""
+	@echo "EXAMPLES:"
+	@echo "  make              # Fast development build"
+	@echo "  make go           # Ultra-fast build and run"
+	@echo "  make debug        # When you need full debugging"
+	@echo "  make time-build   # Measure build performance"

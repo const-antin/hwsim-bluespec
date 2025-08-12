@@ -193,8 +193,8 @@ module mkPMU#(
                 $display("[ERROR]: Instruction received in data input"); // TODO: Should be able to accept incoming config
                 $finish(0);
             end
-            tagged Tag_EndToken .et: begin
-                token_out.enq(tagged Tag_EndToken et);
+            tagged Tag_EndToken: begin
+                token_out.enq(tagged Tag_EndToken);
                 $display("End token received in store");
             end
         endcase
@@ -218,7 +218,7 @@ module mkPMU#(
                     $finish(0);
                 end
             end
-            tagged Tag_EndToken .et: begin
+            tagged Tag_EndToken: begin
                 // Print the state of the memory being used
                 for (Integer i = 0; i < valueOf(SETS); i = i + 1) begin
                     // Check if set is valid
@@ -228,7 +228,7 @@ module mkPMU#(
                         $display("[MEMORY USAGE]: Set %d: No frames used", i);
                     end
                 end
-                data_out.enq(tagged Tag_EndToken et);
+                data_out.enq(tagged Tag_EndToken);
                 $display("End token received");
             end
             default: begin
