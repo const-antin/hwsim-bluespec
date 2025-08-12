@@ -9,6 +9,13 @@ import FileReader::*;
 import RamulatorArbiter::*;
 import StmtFSM::*;
 
+function Bit#(m) resize(Bit#(n) x);
+    // TMax#(m,n) is a type‐level max(m,n)
+    Bit#(TMax#(m,n)) x_ext = zeroExtend(x);
+    Bit#(m)            y   = truncate(x_ext);
+    return y;
+endfunction
+
 interface Operation_IFC;
     method Action put(Int#(32) input_port, ChannelMessage msg);
     method ActionValue#(ChannelMessage) get(Int#(32) output_port);
@@ -263,19 +270,54 @@ module mkPromote#(Int#(32) rank) (Operation_IFC);
     endmethod
 endmodule
 
-(* synthesize *)
-module mkPartition#(Int#(32) rank, Int#(32) num_outputs) (Operation_IFC);
-    FIFO#(ChannelMessage) input_fifo <- mkFIFO;
-    FIFO#(ChannelMessage) output_fifo <- mkFIFO;
-    
-    method Action put(Int#(32) input_port, ChannelMessage msg);
-        input_fifo.enq(msg);
-    endmethod
+interface Partition_IFC#(numeric type num_outputs);
+    interface Operation_IFC op;
+endinterface
 
-    method ActionValue#(ChannelMessage) get(Int#(32) output_port);
-        output_fifo.deq;
-        return output_fifo.first;
-    endmethod
+module mkPartition#(Int#(32) rank, Integer num_outputs) (Partition_IFC#(num_outputs));
+    FIFO#(ChannelMessage) input_fifo <- mkFIFO;
+    FIFO#(ChannelMessage) sel_fifo <- mkFIFO;
+    Vector#(num_outputs, FIFO#(ChannelMessage)) output_fifo <- replicateM(mkFIFO);
+
+    Reg#(Int#(32)) count <- mkReg(0);
+
+    rule propagate_end if (input_fifo.first matches tagged Tag_EndToken);
+        input_fifo.deq;
+        if (sel_fifo.first matches tagged Tag_EndToken) begin
+            sel_fifo.deq;
+        end else begin
+            $display("Error: Expected end token in select FIFO, got %s", fshow(sel_fifo.first));
+            $finish(-1);
+        end
+        for (Int#(32) i = 0; i < fromInteger(num_outputs); i = i + 1) begin
+            output_fifo[i].enq(tagged Tag_EndToken);
+        end
+    endrule
+
+    rule do_partition if (input_fifo.first matches tagged Tag_Data .current &&& sel_fifo.first matches tagged Tag_Data .selected);
+        for (Int#(32) i = 0; i < fromInteger(num_outputs); i = i + 1) begin    
+            if (tpl_1(selected).Tag_Selector[i] == 1) begin
+                output_fifo[i].enq(tagged Tag_Data tuple2(tpl_1(current), tpl_2(current)));
+            end
+        end
+        input_fifo.deq;
+        sel_fifo.deq;
+    endrule
+
+    interface Operation_IFC op;
+        method Action put(Int#(32) input_port, ChannelMessage msg);
+            if (input_port == 0) begin
+                input_fifo.enq(msg);
+            end else begin
+                sel_fifo.enq(msg);
+            end
+        endmethod
+
+        method ActionValue#(ChannelMessage) get(Int#(32) output_port);
+            output_fifo[output_port].deq;
+            return output_fifo[output_port].first;
+        endmethod
+    endinterface
 endmodule
 
 typedef enum {
@@ -360,6 +402,51 @@ module mkAccumBigTile#(function Tile func (Tile tile, Tile tile2), Int#(32) rank
             return output_fifo.first;
         end
     endmethod
+endmodule
+
+module mkAccumRetile#(Int#(32) rank) (Operation_IFC);
+    FIFO#(ChannelMessage) input_fifo <- mkFIFO;
+    FIFO#(ChannelMessage) output_fifo <- mkFIFO;
+
+    Reg#(Tile) acc <- mkReg(0);
+    Reg#(UInt#(TAdd#(TLog#(TMul#(TILE_SIZE, SizeOf#(Scalar))), 1))) col_ptr <- mkReg(0);
+
+    rule concat if (input_fifo.first matches tagged Tag_Data .current);
+        input_fifo.deq;
+        let shift = (valueOf(SizeOf#(Scalar)) * valueOf(TILE_SIZE));
+        let novel = tpl_1(current).Tag_Tile << (fromInteger(shift) * col_ptr);
+        let newtile = acc | novel;
+
+        if (col_ptr + 1 == fromInteger(valueOf(TILE_SIZE)) || tpl_2(current) >= rank) begin
+            // The tile is full, we def' have to emit it.
+            if (tpl_2(current) < rank) begin
+                $display("Received new tile to accumulate, but tile already is bigger than hardware tile size!");
+                $finish(-1);
+            end
+            col_ptr <= 0;
+            acc <= 0;
+            let out_rank = tpl_2(current) - rank;
+            output_fifo.enq(tagged Tag_Data tuple2(tagged Tag_Tile newtile, out_rank));
+        end else begin
+            col_ptr <= col_ptr + 1;
+            acc <= newtile;
+        end 
+    endrule
+
+    rule forward_end if (input_fifo.first matches tagged Tag_EndToken);
+        input_fifo.deq;
+        output_fifo.enq(tagged Tag_EndToken);
+    endrule
+
+    method Action put(Int#(32) input_port, ChannelMessage msg);
+        input_fifo.enq(msg);
+    endmethod 
+
+    method ActionValue#(ChannelMessage) get(Int#(32) output_port);
+        output_fifo.deq;
+        return output_fifo.first;
+    endmethod
+
 endmodule
 
 module mkTileReader#(Integer num_entries, String filename, Bit#(8) port_id, RamulatorArbiterIO arbiter) (Operation_IFC);
@@ -467,19 +554,73 @@ module mkTiledRetileStreamify#(Int#(32) repeats, Bool filter_mask, Bool split_ro
     endmethod
 endmodule
 
-(* synthesize *)
-module mkReassemble#(Int#(32) num_inputs) (Operation_IFC);
-    FIFO#(ChannelMessage) input_fifo <- mkFIFO;
+interface Reassemble_IFC#(numeric type num_inputs);
+    interface Operation_IFC op;
+endinterface
+
+// TODO: This is not II=1 yet.
+module mkReassemble#(Integer num_inputs) (Reassemble_IFC#(num_inputs));
+    Vector#(num_inputs, FIFOF#(ChannelMessage)) input_fifos <- replicateM(mkFIFOF);
+    FIFO#(ChannelMessage) sel_fifo <- mkFIFO;
     FIFO#(ChannelMessage) output_fifo <- mkFIFO;
 
-    method Action put(Int#(32) input_port, ChannelMessage msg);
-        input_fifo.enq(msg);
-    endmethod
+    Reg#(Selector) this_selector <- mkReg(0);
 
-    method ActionValue#(ChannelMessage) get(Int#(32) output_port);
-        output_fifo.deq;
-        return output_fifo.first;
-    endmethod
+    Wire#(UInt#(TLog#(num_inputs))) first_to_dequeue <- mkWire;
+    Wire#(Selector) current_selector <- mkWire;
+
+    function has_data_and_is_selected(x) = (tpl_1(x).notEmpty && tpl_2(x) == 1);
+    function id(x) = x;
+
+    rule get_selector if (sel_fifo.first matches tagged Tag_Data .selected &&& this_selector == 0);
+        this_selector <= tpl_1(selected).Tag_Selector;
+        sel_fifo.deq;
+    endrule
+
+    rule find_reassemble if (this_selector != 0);
+        let t = resize(pack(this_selector));
+        Vector#(num_inputs, Bit#(1)) select_as_vec = unpack(t);
+        let is_selected = map(has_data_and_is_selected, zip(input_fifos, select_as_vec));
+        let dequeue_idx = findIndex(id, is_selected);
+        if (dequeue_idx matches tagged Valid .index) begin
+            first_to_dequeue <= index;
+        end
+    endrule
+
+    rule do_reassemble;
+        let this_selector_updated = this_selector;
+        this_selector_updated[first_to_dequeue] = 0; // Clear the selector for the dequeued input
+        this_selector <= this_selector_updated;
+
+        output_fifo.enq(input_fifos[first_to_dequeue].first);
+        input_fifos[first_to_dequeue].deq;
+    endrule
+
+    rule do_end if (sel_fifo.first matches tagged Tag_EndToken &&& this_selector == 0);
+        sel_fifo.deq;
+        for (Int#(32) i = 0; i < fromInteger(num_inputs); i = i + 1) begin
+            input_fifos[i].deq;
+        end
+        output_fifo.enq(tagged Tag_EndToken);
+    endrule
+
+    interface Operation_IFC op;
+        method Action put(Int#(32) input_port, ChannelMessage msg);
+            if (input_port < fromInteger(num_inputs)) begin
+                input_fifos[input_port].enq(msg);
+            end else if (input_port == fromInteger(num_inputs)) begin
+                sel_fifo.enq(msg);
+            end else begin
+                $display("Reassemble: Invalid put index %s", fshow(input_port));
+                $finish(-1);
+            end 
+        endmethod
+
+        method ActionValue#(ChannelMessage) get(Int#(32) output_port);
+            output_fifo.deq;
+            return output_fifo.first;
+        endmethod
+    endinterface
 endmodule
 
 module mkBroadcastTest (Empty);
@@ -505,6 +646,125 @@ module mkBroadcastTest (Empty);
             endaction
         endpar
     );
-
 endmodule
+
+module mkAccumRetileTest (Empty);
+    Operation_IFC op <- mkAccumRetile(1);
+
+    let tile_a = tagged Tag_Tile unpack(5);
+    let tile_b = tagged Tag_Tile unpack(1);
+    let tile_ref = tagged Tag_Tile (tile_a.Tag_Tile | (tile_b.Tag_Tile << (valueOf(SizeOf#(Scalar)) * valueOf(TILE_SIZE))));
+
+    let msg_a = tagged Tag_Data tuple2(tile_a, 0);
+    let msg_b = tagged Tag_Data tuple2(tile_b, 1);
+    let msg_ref = tagged Tag_Data tuple2(tile_ref, 0);
+
+    mkAutoFSM(
+        par
+            seq
+                action
+                    op.put(0, msg_a);
+                endaction
+                action
+                    op.put(0, msg_b);
+                endaction
+                action
+                    op.put(0, msg_a);
+                endaction
+                action
+                    op.put(0, msg_b);
+                endaction
+            endseq
+            action
+                let t <- op.get(0);
+                if (t != msg_ref) begin
+                    $display("Return did not match reference! Got %s, expected %s", fshow(t), fshow(msg_ref));
+                    $finish(-1);
+                end
+            endaction
+            action
+                let t <- op.get(0);
+                if (t != msg_ref) begin
+                    $display("Return did not match reference! Got %s, expected %s", fshow(t), fshow(msg_ref));
+                    $finish(-1);
+                end
+                $display("SUCCESS!");
+            endaction
+        endpar
+    );
+endmodule
+
+module mkReassembleTest (Empty);
+    Reassemble_IFC#(4) reassemble <- mkReassemble(4);
+
+    mkAutoFSM (
+        par
+            seq
+                action
+                    reassemble.op.put(1, tagged Tag_Data tuple2(Tag_Tile(unpack(1)), 0));
+                    reassemble.op.put(4, tagged Tag_Data tuple2(Tag_Selector(unpack(2)), 0));
+                    $display("put first round");
+                endaction
+
+                action
+                    reassemble.op.put(0, tagged Tag_Data tuple2(Tag_Tile(unpack(1)), 0));
+                    reassemble.op.put(1, tagged Tag_Data tuple2(Tag_Tile(unpack(2)), 0));
+                    reassemble.op.put(4, tagged Tag_Data tuple2(Tag_Selector(unpack(3)), 0));
+                    $display("put second round");
+                endaction
+            endseq
+            seq 
+                action
+                    let t <- reassemble.op.get(0);
+                    $display("t (0):", fshow(tpl_1(t.Tag_Data).Tag_Tile[2:0]));
+                endaction
+                action 
+                    let t <- reassemble.op.get(0);
+                    $display("t (0):", fshow(tpl_1(t.Tag_Data).Tag_Tile[2:0]));
+                endaction 
+                action
+                    let t <- reassemble.op.get(0);
+                    $display("t (1):", fshow(tpl_1(t.Tag_Data).Tag_Tile[2:0]));
+                endaction
+            endseq 
+        endpar 
+    );
+endmodule
+
+module mkPartitionTest (Empty);
+    Partition_IFC#(4) partition <- mkPartition(2, 4);
+
+    mkAutoFSM (
+        par
+            seq
+                action
+                    partition.op.put(0, tagged Tag_Data tuple2(Tag_Tile(unpack(1)), 0));
+                    partition.op.put(1, tagged Tag_Data tuple2(Tag_Selector(unpack(2)), 0));
+                    $display("put first round");
+                endaction
+
+                action
+                    partition.op.put(0, tagged Tag_Data tuple2(Tag_Tile(unpack(1)), 0));
+                    partition.op.put(1, tagged Tag_Data tuple2(Tag_Selector(unpack(3)), 0));
+                    $display("put second round");
+                endaction
+            endseq
+            seq
+                action
+                    let t <- partition.op.get(1);
+                    $display("t (1):", fshow(tpl_1(t.Tag_Data).Tag_Tile[2:0]));
+                endaction
+                action
+                    let t <- partition.op.get(0);
+                    $display("t (0):", fshow(tpl_1(t.Tag_Data).Tag_Tile[2:0]));
+                endaction
+                action
+                    let t <- partition.op.get(1);
+                    $display("t (1):", fshow(tpl_1(t.Tag_Data).Tag_Tile[2:0]));
+                endaction
+            endseq 
+        endpar
+    );
+endmodule
+
 endpackage

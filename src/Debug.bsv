@@ -4,12 +4,7 @@ import Types::*;
 import Operation::*;
 import Parameters::*;
 
-interface DebugOperation;
-    method Action put(Int#(32) input_port, ChannelMessage msg);
-    method ActionValue#(ChannelMessage) get(Int#(32) output_port);
-endinterface
-
-module mkDebugOperation#(Operation_IFC op, String name) (DebugOperation);
+module mkDebugOperation#(Operation_IFC op, String name) (Operation_IFC);
     method Action put(Int#(32) input_port, ChannelMessage msg);
         let st = tpl_2(msg.Tag_Data);
         if (valueOf(PRINT_DEBUG_OPERATION) == 1) begin

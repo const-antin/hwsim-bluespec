@@ -9,6 +9,7 @@ typedef Int#(32) Scalar;
 typedef 16 TILE_SIZE;
 typedef TMul#(TILE_SIZE, TILE_SIZE) TILE_SIZE_SQUARE;
 typedef Bit#(TMul#(TILE_SIZE, TMul#(TILE_SIZE, SizeOf#(Scalar)))) Tile;
+typedef Bit#(TMul#(TILE_SIZE, TMul#(TILE_SIZE, SizeOf#(Scalar)))) Selector;
 
 /*
 function Tile add_tile (Tile a, Tile b);
@@ -156,17 +157,18 @@ typedef union tagged {
     Tile Tag_Tile;
     Ref Tag_Ref;
     Scalar Tag_Scalar;
-} Data deriving (Bits, FShow);
+    Selector Tag_Selector;
+} Data deriving (Bits, Eq, FShow);
 
 typedef struct {
     UInt#(16) ptr;
     UInt#(16) port_idx;
-} Instruction_Ptr deriving (Bits, FShow);
+} Instruction_Ptr deriving (Bits, Eq, FShow);
 
 typedef union tagged {
     Tuple2#(Data, StopToken) Tag_Data;
     Instruction_Ptr Tag_Instruction;
     void Tag_EndToken;
-} ChannelMessage deriving (Bits, FShow);
+} ChannelMessage deriving (Bits, Eq, FShow);
 
 endpackage

@@ -5,13 +5,6 @@ import Types::*;
 import Operation::*;
 import RegFile::*;
 
-function Bit#(m) resize(Bit#(n) x);
-    // TMax#(m,n) is a type‐level max(m,n)
-    Bit#(TMax#(m,n)) x_ext = zeroExtend(x);
-    Bit#(m)            y   = truncate(x_ext);
-    return y;
-endfunction
-
 interface Bufferize#(numeric type num_entries, numeric type elements_per_entry);
 // these methods are for uniform interface w.r.t. the operation module
 

@@ -37,8 +37,9 @@ endinterface
 
 
 // PMU module that processes between the FIFOs
+(* synthesize *)
 module mkPMU#(
-    Int#(32) rank_in                    // Rank of the current tile
+    Int#(32) rank                    // Rank of the current tile
 )(PMU_IFC);
     FIFO#(ChannelMessage) data_in <- mkFIFO;      // Values come in here
     FIFO#(ChannelMessage) token_out <- mkFIFO;    // Generated tokens go out here
@@ -50,7 +51,6 @@ module mkPMU#(
     SetFreeList_IFC free_list <- mkSetFreeList;
     SetUsageTracker_IFC usage_tracker <- mkSetUsageTracker;
     Reg#(StorageLocation) curr_loc <- mkReg(StorageLocation { set: 0, frame: 0, valid: False });
-    Reg#(Int#(32)) rank <- mkReg(rank_in);
     ConfigReg#(Bit#(TLog#(MAX_ENTRIES))) token_counter <- mkConfigReg(0);
     Reg#(Bit#(32)) cycle_count <- mkReg(0);
 
