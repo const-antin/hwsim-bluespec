@@ -510,9 +510,44 @@ module mkSelectGen#(parameter String name) (Operation_IFC);
 endmodule 
 
 (* synthesize *)
-module mkReshape#(int in_dim, int out_dim) (Operation_IFC);
+module mkReshape#(StopToken rank, Int#(32) chunk_size) (Operation_IFC);
     FIFO#(ChannelMessage) input_fifo <- mkFIFO;
     FIFO#(ChannelMessage) output_fifo <- mkFIFO;
+
+    Reg#(Int#(32)) count_this_rank <- mkReg(0);
+
+    rule reshape if (input_fifo.first matches tagged Tag_Data .current);
+        let st = tpl_2(current);
+        input_fifo.deq();
+
+        if (st < rank) begin
+            output_fifo.enq(input_fifo.first);
+        end else if (st == rank) begin
+            let new_rank = count_this_rank + 1;
+            if (new_rank == chunk_size) begin
+                st = st + 1;
+                count_this_rank <= 0;
+                output_fifo.enq(tagged Tag_Data tuple2(tpl_1(current), st));
+            end else begin
+                count_this_rank <= new_rank;
+                output_fifo.enq(input_fifo.first);
+            end 
+        end else if (st > rank) begin
+            let new_rank = count_this_rank + 1;
+            if (new_rank == chunk_size) begin
+                output_fifo.enq(tagged Tag_Data tuple2(tpl_1(current), st + 1));
+                count_this_rank <= 0;
+            end else begin 
+                $display("Error: Reshape would have to pad values.");
+                $finish(-1);
+            end 
+        end 
+    endrule
+
+    rule pass_end if (input_fifo.first matches tagged Tag_EndToken);
+        input_fifo.deq;
+        output_fifo.enq(tagged Tag_EndToken);
+    endrule
 
     method Action put(Int#(32) input_port, ChannelMessage msg);
         input_fifo.enq(msg);
@@ -543,6 +578,40 @@ endmodule
 module mkTiledRetileStreamify#(Int#(32) repeats, Bool filter_mask, Bool split_row) (Operation_IFC);
     FIFO#(ChannelMessage) input_fifo <- mkFIFO;
     FIFO#(ChannelMessage) output_fifo <- mkFIFO;
+
+    Reg#(UInt#(TAdd#(TLog#(TILE_SIZE), 1))) col_idx <- mkReg(0);
+
+    rule retile if (input_fifo.first matches tagged Tag_Data .current);
+        StopToken rank;
+        if (col_idx < fromInteger(valueOf(TILE_SIZE)) - 1) begin
+            rank = 0;
+        end else begin
+            rank = tpl_2(current) + 1; // TODO: I assume the rank should be incremented here.
+        end
+    
+        if (col_idx < fromInteger(valueOf(TILE_SIZE))) begin
+            let data_width = fromInteger(valueOf(SizeOf#(Scalar)) * valueOf(TILE_SIZE));
+            Vector#(TILE_SIZE, Bit#(TMul#(TILE_SIZE, SizeOf#(Scalar)))) rows = unpack(pack(tpl_1(current).Tag_Tile));
+            let row = rows[col_idx];
+            let tile = tagged Tag_Tile pack(extend(row));
+            ChannelMessage out = tagged Tag_Data tuple2(tile, rank);
+            output_fifo.enq(out);
+        end
+        if (col_idx + 1 == fromInteger(valueOf(TILE_SIZE))) begin
+            col_idx <= 0;
+            input_fifo.deq;
+        end else begin
+            col_idx <= col_idx + 1;
+        end 
+        if (col_idx + 1 > fromInteger(valueOf(TILE_SIZE))) begin
+            $finish(-1);
+        end
+    endrule
+
+    rule pass_end if (input_fifo.first matches tagged Tag_EndToken);
+        input_fifo.deq;
+        output_fifo.enq(tagged Tag_EndToken);
+    endrule
 
     method Action put(Int#(32) input_port, ChannelMessage msg);
         input_fifo.enq(msg);
@@ -763,6 +832,42 @@ module mkPartitionTest (Empty);
                     $display("t (1):", fshow(tpl_1(t.Tag_Data).Tag_Tile[2:0]));
                 endaction
             endseq 
+        endpar
+    );
+endmodule
+
+module mkTiledRetileStreamifyTest (Empty);
+    Operation_IFC retile <- mkTiledRetileStreamify(2, True, True);
+
+    Reg#(Int#(32)) i <- mkReg(0);
+    let data = tagged Tag_Data tuple2(Tag_Tile(unpack(0)), 8);
+
+    mkAutoFSM (
+        par
+            seq
+                action
+                    retile.put(0, data);
+                endaction
+                action
+                    retile.put(0, tagged Tag_EndToken);
+                endaction 
+            endseq
+            seq
+                for (i <= 0; i < fromInteger(valueOf(TILE_SIZE)); i <= i + 1) 
+                    action
+                        let t <- retile.get(0);
+                        $display("tile: %s", fshow(t));
+                    endaction
+                action
+                    let t <- retile.get(0);
+                    if (t != tagged Tag_EndToken) begin
+                        $display("Expected end token, got %s", fshow(t));
+                        $finish(-1);
+                    end else begin
+                        $display("Received end token as expected");
+                    end
+                endaction
+            endseq
         endpar
     );
 endmodule
