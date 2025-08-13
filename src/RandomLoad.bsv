@@ -123,6 +123,27 @@ module mkDynamicRandomLoad#(List#(Int#(32)) shape) (Operation_IFC);
     endmethod 
 endmodule
 
+
+module mkRandomSelectGen#(Int#(32) num_experts) (Operation_IFC);
+    let randomizer <- mkConstrainedRandomizer(0, (2 << num_experts) - 1);
+    Reg#(Bool) init <- mkReg(False);
+
+    rule go if (!init);
+        randomizer.cntrl.init();
+    endrule
+
+    method ActionValue#(ChannelMessage) get(Int#(32) index);
+        Selector next <- randomizer.next();
+        return tagged Tag_Data tuple2(tagged Tag_Selector (next), 0);
+    endmethod 
+
+    method Action put(Int#(32) index, ChannelMessage tile);
+        $display("Put should never be called on random select gen!");
+        $finish(-1);
+    endmethod
+
+endmodule
+
 module mkRandomOffChipLoadTest (Empty);
     List#(Int#(32)) l = Cons(4, Cons(2, Cons(3, Nil)));
     let offchipload <- mkRandomOffChipLoad(l);
