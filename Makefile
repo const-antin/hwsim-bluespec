@@ -7,7 +7,7 @@
 BDPI_C_SRC ?= dpi/matmul_tile.c dpi/ramulator_wrapper.cpp
 
 # Add SMU directory to search path
-BSC_PATH1 = src/SMU:
+BSC_PATH1 = src/SMU:src/Interconnect:src/OffChip:src/SCU:
 
 # ================================================================
 # Ramulator flags for linking
@@ -22,3 +22,8 @@ BSC_LINK_FLAGS += -Xl "-L./ramulator2" \
 		-Xc++ "-I./ramulator2/src"
 
 include ./res/Include_Makefile.mk
+
+.PHONY: auto_tests
+
+auto_tests:
+	./run_tests.sh
