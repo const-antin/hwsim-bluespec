@@ -35,12 +35,12 @@ TOPFILE ?= src/Top.$(SRC_EXT)
 TOPMODULE ?= mkTop
 
 BSC_COMP_FLAGS += -keep-fires -aggressive-conditions -no-warn-action-shadowing -check-assert -cpp \
-	+RTS -K2G -RTS -show-range-conflict -show-schedule -Xc "lm" -steps-max-intervals 10000000 -v -show-stats -sched-dot
+	+RTS -K3G -RTS -show-range-conflict -show-schedule -Xc "lm" -steps-max-intervals 10000000 -v -show-stats -sched-dot
 
-BSC_LINK_FLAGS += -keep-fires -Xc "lm" -show-stats
+BSC_LINK_FLAGS += -keep-fires -Xc "lm" -show-stats +RTS -K3G -RTS
 BSC_PATHS = -p $(BSC_PATH1)src:$(RESOURCES_DIR):+
 
-V_SIM ?= iverilog
+V_SIM ?= verilator
 
 # ================================================================
 # BDPI Support (static object compilation)
@@ -122,13 +122,13 @@ v_compile:
 	mkdir -p $(V_BUILD_DIR)/rtl
 	mkdir -p $(BIN_DIR)
 	@echo Compiling for Verilog ...
-	bsc -u -verilog $(V_DIRS) $(BSC_COMP_FLAGS) $(BSC_PATHS) -g $(TOPMODULE) $(TOPFILE)
+	bsc -u -verilog $(V_DIRS) $(BSC_COMP_FLAGS) -use-dpi $(BSC_PATHS) -g $(TOPMODULE) $(TOPFILE)
 	@echo Compiling for Verilog finished
 
 .PHONY: v_link
 v_link:
 	@echo Linking for Verilog sim ...
-	bsc -e $(TOPMODULE) -verilog -o $(V_SIM_EXE) $(V_DIRS) -vsim $(V_SIM) $(V_BUILD_DIR)/rtl/$(TOPMODULE).v
+	bsc -e $(TOPMODULE) -verilog -use-dpi -o $(V_SIM_EXE) $(V_DIRS) -vsim $(V_SIM) $(V_BUILD_DIR)/rtl/$(TOPMODULE).v
 	@echo Linking for Verilog sim finished
 
 .PHONY: v_sim
