@@ -240,7 +240,7 @@ module mkMatmul(Empty);
     for (Int#(32) i = 0; i < systolic_array_size; i = i + 1) begin
          rule drain;
             let r1 <- matmuls[systolic_array_size * i + (systolic_array_size - 1)].get_psum;
-            $display("result: %s", fshow(r1.t));
+            $display("result: ", fshow(r1.t));
             if (i == 0) begin
                 drained <= drained + 1;
             end

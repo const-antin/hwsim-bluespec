@@ -286,7 +286,7 @@ module mkPartition#(Int#(32) rank, Integer num_outputs) (Partition_IFC#(num_outp
         if (sel_fifo.first matches tagged Tag_EndToken) begin
             sel_fifo.deq;
         end else begin
-            $display("Error: Expected end token in select FIFO, got %s", fshow(sel_fifo.first));
+            $display("Error: Expected end token in select FIFO, got", fshow(sel_fifo.first));
             $finish(-1);
         end
         for (Int#(32) i = 0; i < fromInteger(num_outputs); i = i + 1) begin
@@ -471,7 +471,7 @@ module mkPrinter#(parameter String name) (Operation_IFC);
         let cur = input_fifo.first;
         input_fifo.deq;
         
-        $display("[cycle %d] %s: %s", cc, name, fshow(cur));
+        $display("[cycle %d] %s: ", cc, name, fshow(cur));
 
         if (tpl_2(cur.Tag_Data) == 5) begin // Hardcoded for Gina's application.
             $display("Finished at cycle %d", cc);
@@ -680,7 +680,7 @@ module mkReassemble#(Integer num_inputs) (Reassemble_IFC#(num_inputs));
             end else if (input_port == fromInteger(num_inputs)) begin
                 sel_fifo.enq(msg);
             end else begin
-                $display("Reassemble: Invalid put index %s", fshow(input_port));
+                $display("Reassemble: Invalid put index", fshow(input_port));
                 $finish(-1);
             end 
         endmethod
@@ -709,7 +709,7 @@ module mkBroadcastTest (Empty);
                 if (t matches tagged Tag_Data .td &&& tpl_2(td) == 0) begin
                     $display("Received tile with ref 0 from port %d", i);
                 end else begin
-                    $display("Error: Expected tile with ref 0, got %s", fshow(t));
+                    $display("Error: Expected tile with ref 0, got ", fshow(t));
                     $finish(-1);
                 end 
             endaction
@@ -747,14 +747,14 @@ module mkAccumRetileTest (Empty);
             action
                 let t <- op.get(0);
                 if (t != msg_ref) begin
-                    $display("Return did not match reference! Got %s, expected %s", fshow(t), fshow(msg_ref));
+                    $display("Return did not match reference! Got ", fshow(t), ", expected ", fshow(msg_ref));
                     $finish(-1);
                 end
             endaction
             action
                 let t <- op.get(0);
                 if (t != msg_ref) begin
-                    $display("Return did not match reference! Got %s, expected %s", fshow(t), fshow(msg_ref));
+                    $display("Return did not match reference! Got ", fshow(t), ", expected ", fshow(msg_ref));
                     $finish(-1);
                 end
                 $display("SUCCESS!");
@@ -856,12 +856,12 @@ module mkTiledRetileStreamifyTest (Empty);
                 for (i <= 0; i < fromInteger(valueOf(TILE_SIZE)); i <= i + 1) 
                     action
                         let t <- retile.get(0);
-                        $display("tile: %s", fshow(t));
+                        $display("tile: ", fshow(t));
                     endaction
                 action
                     let t <- retile.get(0);
                     if (t != tagged Tag_EndToken) begin
-                        $display("Expected end token, got %s", fshow(t));
+                        $display("Expected end token, got", fshow(t));
                         $finish(-1);
                     end else begin
                         $display("Received end token as expected");

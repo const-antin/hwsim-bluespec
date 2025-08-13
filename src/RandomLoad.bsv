@@ -30,7 +30,7 @@ module mkRandomOffChipLoad#(List#(Int#(32)) shape) (Operation_IFC);
             sent_end <= True;
         end else begin
             $display("Index: %d", ctr);
-            $display("Size: %s", fshow(size));
+            $display("Size: ", fshow(size));
             StopToken st = 0;
             for (Int#(32) i = 0; i < fromInteger(length(shape)); i = i + 1) begin
                 if (ctr % size[i] == 0) begin
@@ -150,7 +150,7 @@ module mkRandomOffChipLoadTest (Empty);
 
     rule drain;
         let t <- offchipload.get(0);
-        $display("Received tile: %s\n", fshow(tpl_2(t.Tag_Data)));
+        $display("Received tile: ", fshow(tpl_2(t.Tag_Data)));
     endrule
 endmodule
 
@@ -182,7 +182,7 @@ module mkDynamicRandomLoadTest (Empty);
                     if (t matches tagged Tag_Data .td &&& tpl_2(td) == 1) begin
                         // nothing 
                     end else begin
-                        $display("Error: Expected tile with ref 1, got %s", fshow(t));
+                        $display("Error: Expected tile with ref 1, got", fshow(t));
                         $finish(-1);
                     end 
                 endaction
@@ -191,7 +191,7 @@ module mkDynamicRandomLoadTest (Empty);
                     if (t matches tagged Tag_Data .td &&& tpl_2(td) == 3) begin
                         // nothing 
                     end else begin
-                        $display("Error: Expected tile with ref 3, got %s", fshow(t));
+                        $display("Error: Expected tile with ref 3, got", fshow(t));
                         $finish(-1);
                     end 
                 endaction
@@ -200,7 +200,7 @@ module mkDynamicRandomLoadTest (Empty);
                     if (t matches tagged Tag_Data .td &&& tpl_2(td) == 1) begin
                         // nothing 
                     end else begin
-                        $display("Error: Expected tile with ref 1, got %s", fshow(t));
+                        $display("Error: Expected tile with ref 1, got", fshow(t));
                         $finish(-1);
                     end 
                 endaction
@@ -209,7 +209,7 @@ module mkDynamicRandomLoadTest (Empty);
                     if (t matches tagged Tag_Data .td &&& tpl_2(td) == 4) begin
                         // nothing 
                     end else begin
-                        $display("Error: Expected tile with ref 4, got %s", fshow(t));
+                        $display("Error: Expected tile with ref 4, got", fshow(t));
                         $finish(-1);
                     end 
                 endaction
@@ -218,7 +218,7 @@ module mkDynamicRandomLoadTest (Empty);
                     if (t matches tagged Tag_EndToken) begin
                         $display("Received end token");
                     end else begin
-                        $display("Error: Expected end token, got %s", fshow(t));
+                        $display("Error: Expected end token, got", fshow(t));
                         $finish(-1);
                     end
                 endaction

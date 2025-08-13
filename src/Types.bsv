@@ -6,7 +6,7 @@ import Vector::*;
 typedef Int#(32) StopToken;
 typedef Int#(32) Scalar;
 
-typedef 16 TILE_SIZE;
+typedef 2 TILE_SIZE;
 typedef TMul#(TILE_SIZE, TILE_SIZE) TILE_SIZE_SQUARE;
 typedef Bit#(TMul#(TILE_SIZE, TMul#(TILE_SIZE, SizeOf#(Scalar)))) Tile;
 typedef Bit#(TMul#(TILE_SIZE, TMul#(TILE_SIZE, SizeOf#(Scalar)))) Selector;
@@ -67,62 +67,62 @@ endfunction
 */
 
 typedef TMul#(TMul#(TILE_SIZE, TILE_SIZE), 32) TileBits;
-import "BDPI" function Bit#(TileBits) matmul_t_tile_c(Bit#(TileBits) a, Bit#(TileBits) b, Int#(32) tile_size);
-import "BDPI" function Bit#(TileBits) add_tile_c(Bit#(TileBits) a, Bit#(TileBits) b, Int#(32) tile_size);
-import "BDPI" function Bit#(TileBits) sub_tile_c(Bit#(TileBits) a, Bit#(TileBits) b, Int#(32) tile_size);
-import "BDPI" function Bit#(TileBits) mul_tile_c(Bit#(TileBits) a, Bit#(TileBits) b, Int#(32) tile_size);
-import "BDPI" function Bit#(TileBits) div_tile_c(Bit#(TileBits) a, Bit#(TileBits) b, Int#(32) tile_size);
-import "BDPI" function Bit#(TileBits) silu_tile_c(Bit#(TileBits) a, Int#(32) tile_size);
+// import "BDPI" function Bit#(TileBits) matmul_t_tile_c(Bit#(TileBits) a, Bit#(TileBits) b, Int#(32) tile_size);
+// import "BDPI" function Bit#(TileBits) add_tile_c(Bit#(TileBits) a, Bit#(TileBits) b, Int#(32) tile_size);
+// import "BDPI" function Bit#(TileBits) sub_tile_c(Bit#(TileBits) a, Bit#(TileBits) b, Int#(32) tile_size);
+// import "BDPI" function Bit#(TileBits) mul_tile_c(Bit#(TileBits) a, Bit#(TileBits) b, Int#(32) tile_size);
+// import "BDPI" function Bit#(TileBits) div_tile_c(Bit#(TileBits) a, Bit#(TileBits) b, Int#(32) tile_size);
+// import "BDPI" function Bit#(TileBits) silu_tile_c(Bit#(TileBits) a, Int#(32) tile_size);
 
 function Tile matmul_t_tile(Tile a, Tile b);
     Bit#(TileBits) a_packed = pack(a);
     Bit#(TileBits) b_packed = pack(b);
 
-    let v = matmul_t_tile_c(a_packed, b_packed, fromInteger(valueOf(TILE_SIZE)));
+    // let v = matmul_t_tile_c(a_packed, b_packed, fromInteger(valueOf(TILE_SIZE)));
 
-    return unpack(v);
+    return a;
 endfunction
 
 function Tile add_tile(Tile a, Tile b);
     Bit#(TileBits) a_packed = pack(a);
     Bit#(TileBits) b_packed = pack(b);
 
-    let v = add_tile_c(a_packed, b_packed, fromInteger(valueOf(TILE_SIZE)));
+    // let v = add_tile_c(a_packed, b_packed, fromInteger(valueOf(TILE_SIZE)));
 
-    return unpack(v);
+    return a;
 endfunction
 
 function Tile sub_tile(Tile a, Tile b);
     Bit#(TileBits) a_packed = pack(a);
     Bit#(TileBits) b_packed = pack(b);
 
-    let v = sub_tile_c(a_packed, b_packed, fromInteger(valueOf(TILE_SIZE)));
+    // let v = sub_tile_c(a_packed, b_packed, fromInteger(valueOf(TILE_SIZE)));
 
-    return unpack(v);
+    return a;
 endfunction
 
 function Tile mul_tile(Tile a, Tile b);
     Bit#(TileBits) a_packed = pack(a);
     Bit#(TileBits) b_packed = pack(b);
 
-    let v = mul_tile_c(a_packed, b_packed, fromInteger(valueOf(TILE_SIZE)));
+    // let v = mul_tile_c(a_packed, b_packed, fromInteger(valueOf(TILE_SIZE)));
 
-    return unpack(v);
+    return a;
 endfunction
 
 function Tile div_tile(Tile a, Tile b);
     Bit#(TileBits) a_packed = pack(a);
     Bit#(TileBits) b_packed = pack(b);
 
-    let v = div_tile_c(a_packed, b_packed, fromInteger(valueOf(TILE_SIZE)));
+    // let v = div_tile_c(a_packed, b_packed, fromInteger(valueOf(TILE_SIZE)));
 
-    return unpack(v);
+    return a;
 endfunction
 
 function Tile silu_tile(Tile a);
     Bit#(TileBits) a_packed = pack(a);
-    let v = silu_tile_c(a_packed, fromInteger(valueOf(TILE_SIZE)));
-    return unpack(v);
+    // let v = silu_tile_c(a_packed, fromInteger(valueOf(TILE_SIZE)));
+    return a;
 endfunction
 
 function Tile retile_row_tile(Tile a, Tile b);
