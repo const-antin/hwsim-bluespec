@@ -6,7 +6,7 @@
 // TODO: rank shouldnt be a parameter, should be stored in a reg and parsed from a config input
 // TODO: Fair aribitration between directions data is sent, currently prioritizes north, then south, then west, then east.
 // TODO: Tag pmus as bufferizes and dont store to neighbors if theyre also a bufferize
-// TODO: pipeline reads
+// TODO: pipeline reads more correctly, im definitely going slower than necessary
 
 package PMU;
 
@@ -104,8 +104,6 @@ module mkPMU#(
     FIFOF#(RespTag) mem_rsp_src <- mkFIFOF;
     FIFOF#(PendingReq) pending_q <- mkGFIFOF(False, True);
     FIFOF#(LoadMeta)   load_meta_q <- mkGFIFOF(False, True);
-    // ConfigReg#(Maybe#(PendingReq)) pending   <- mkConfigReg(tagged Invalid);
-    // ConfigReg#(Maybe#(LoadMeta))   load_meta <- mkConfigReg(tagged Invalid);
 
     // directional selection wires
     Wire#(Maybe#(Dir)) request_space_wire <- mkDWire(tagged Invalid);
@@ -300,8 +298,6 @@ module mkPMU#(
         mem.readReq(loc.set, loc.frame);
         mem_rsp_src.enq(FromReq);
         pending_q.enq(PendingReq { idx: idx, loc: loc, next: next, deallocate: req.deallocate });
-        // let tile = mem.read(loc.set, loc.frame);
-        // receive_request_data_send_data <= tagged Valid tuple2(DataWithNext { data: tile, loc: loc, next: next }, idx);
         if (req.deallocate &&& (!isValid(next) || loc.set != next.Valid.set)) begin
             free_list.freeSet(loc.set); 
         end
@@ -457,26 +453,6 @@ module mkPMU#(
                 mem.readReq(loc.set, loc.frame);
                 mem_rsp_src.enq(FromLoad);
                 load_meta_q.enq(LoadMeta { loc: loc, next: has_next_piece, deallocate: deallocate, st: st, orig_token: orig_token });
-                // let tile = mem.read(set, loc.frame);
-                // let out_rank = tile.st;
-
-                // Check if weve processed all entries for this token
-                // let next_set = set + 1;
-                // if (has_next_piece matches tagged Valid .next_loc) begin
-                //     next_set = next_loc.set;
-                //     load_token <= tagged Valid LoadState { loc: next_loc, deallocate: deallocate, st: st, orig_token: orig_token };
-                // end else begin
-                //     load_token <= tagged Invalid;
-                //     out_rank = rank + st;
-                //     if (deallocate) begin
-                //         deallocate_reg <= tagged Valid truncate(orig_token); // used to reset the token_counter head
-                //     end
-                // end
-                
-                // receive_send_data_output <= tagged Valid tuple2(tagged Tag_Tile tile.t, out_rank);
-                // if (deallocate && coords == loc.coords && set != next_set) begin
-                //     free_list.freeSet(set); 
-                // end
             end
 
         end
