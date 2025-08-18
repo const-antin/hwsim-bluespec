@@ -250,13 +250,11 @@ module mkPMU#(
 
         Maybe#(Dir) m_idx2 = roundRobinFind(receive_send_data_round_robin_counter_load, has_load_data);
         if (m_idx2 matches tagged Valid .idx) begin
-            $display("Actually received data back from neighbor at PMU %d, %d", coords.x, coords.y);
             receive_send_data[idx].deq;
             let data_with_next = receive_send_data[idx].first.Tag_Load;
             let data = data_with_next.data;
             let loc = data_with_next.loc;
             let next = data_with_next.next;
-            $display("Validity of next: %b", isValid(next));
             let out_rank = !isValid(next) ? rank + load_token.Valid.st : data.st;
             Bool send_next_request = isValid(next) && next.Valid.set != loc.set; // auto loading next frame means we dont need to request the next frame
             if (send_next_request || !isValid(next)) begin
@@ -288,14 +286,12 @@ module mkPMU#(
         Vector#(4, Bool) has_data = map(notEmptyNotFull, zip(receive_request_data, send_data));
         Maybe#(Dir) m_idx = roundRobinFind(receive_request_data_round_robin_counter, has_data);
         if (m_idx matches tagged Valid .idx) begin
-            $display("PMU %d, %d received request data from direction %d", coords.x, coords.y, idx);
             receive_request_data[idx].deq;
             receive_request_data_dequeued_wire <= tagged Valid tuple2(receive_request_data[idx].first.Tag_Request_Data, idx);
             receive_request_data_round_robin_counter <= idx + 1;
         end
     endrule
     rule receive_request_data_do_work ((isValid(receive_request_data_dequeued_wire) || isValid(receive_request_data_reg)) &&& which_rule_reads);
-        $display("PMU %d, %d received request, doing work (reading mem)", coords.x, coords.y);
         let req_tuple = isValid(receive_request_data_dequeued_wire) ? receive_request_data_dequeued_wire.Valid : receive_request_data_reg.Valid;
         let req = tpl_1(req_tuple);
         let idx = tpl_2(req_tuple);
@@ -312,14 +308,12 @@ module mkPMU#(
         // send data back
         // Update register for next cycle (only if we have a next location to process)
         if (isValid(next) && next.Valid.set == loc.set) begin
-            $display("In the isvalid next condition, auto loading the next frame at pmu %d, %d", coords.x, coords.y);
             receive_request_data_reg <= tagged Valid tuple2(RequestStorageAddr {loc: next.Valid, deallocate: req.deallocate}, idx);
         end else begin
             receive_request_data_reg <= tagged Invalid;
         end
     endrule
     rule receive_request_data_enq (receive_request_data_send_data matches tagged Valid .data_with_next);
-        $display("Actually sending data back to neighbor at PMU %d, %d", coords.x, coords.y);
         send_data[tpl_2(data_with_next)].enq(tagged Tag_Load tpl_1(data_with_next));
     endrule
 
@@ -329,7 +323,6 @@ module mkPMU#(
 
         case (src)
             FromReq: begin
-                $display("PMU %d, %d received data from banked memory for request", coords.x, coords.y);
                 let p = pending_q.first; pending_q.deq;
                 receive_request_data_send_data <= tagged Valid tuple2(DataWithNext { data: m, loc: p.loc, next: p.next }, p.idx);
             end
@@ -364,7 +357,6 @@ module mkPMU#(
         Vector#(4, Bool) has_data = map(notEmpty, receive_send_update_pointer);
         Maybe#(Dir) m_idx = roundRobinFind(receive_send_update_pointer_round_robin_counter, has_data);
         if (m_idx matches tagged Valid .idx) begin
-            $display("PMU %d, %d received update pointer from direction %d", coords.x, coords.y, idx);
             receive_send_update_pointer[idx].deq;
             let upd = receive_send_update_pointer[idx].first.Tag_Update_Next_Table;
             next_table[storageAddrToIndex(upd.prev)] <= tagged Valid upd.next;
@@ -491,7 +483,6 @@ module mkPMU#(
     endrule
     rule continue_load_tile_enq (continue_load_tile_request_data matches tagged Valid .continue_load_tile_request_info);
         request_data[tpl_1(continue_load_tile_request_info)].enq(tagged Tag_Request_Data tpl_2(continue_load_tile_request_info));
-        $display("Sending request for data in direction %d at PMU %d, %d", tpl_1(continue_load_tile_request_info), coords.x, coords.y);
     endrule
     rule deallocate_token (initialized &&& deallocate_reg matches tagged Valid .token_id);
         first_entry.upd(token_id, tagged Invalid);
