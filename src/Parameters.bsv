@@ -12,10 +12,10 @@ typedef 4 NUM_OUTPUTS_PER_PMU;
 
 typedef 4 NUM_STAGES;
 
-typedef 4 FRAMES_PER_SET;
+typedef 2 FRAMES_PER_SET;
 typedef TMax#(1, TLog#(FRAMES_PER_SET)) FRAMES_PER_SET_LOG;
 typedef UInt#(FRAMES_PER_SET_LOG) FRAME_INDEX;
-typedef 8 SETS;
+typedef 4 SETS;
 typedef TLog#(SETS) SETS_LOG;
 typedef UInt#(SETS_LOG) SET_INDEX;
 typedef TMul#(FRAMES_PER_SET, SETS) MAX_ENTRIES;
