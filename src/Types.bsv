@@ -221,4 +221,21 @@ typedef union tagged {
     PrevToNextTag Tag_Update_Next_Table;
 } MessageType deriving(Bits, Eq, FShow);
 
+typedef enum { FromReq, FromLoad } RespTag deriving (Bits, Eq);
+
+typedef struct {
+  Dir                 idx;
+  StorageAddr         loc;
+  Maybe#(StorageAddr) next;
+  Bool                deallocate;
+} PendingReq deriving (Bits, Eq);
+
+typedef struct {
+  StorageAddr         loc;
+  Maybe#(StorageAddr) next;
+  Bool                deallocate;
+  StopToken           st;
+  TokID               orig_token;
+} LoadMeta deriving (Bits, Eq);
+
 endpackage

@@ -476,13 +476,13 @@ module mkTestPMUGrid2(Empty);
                         valIndex0 <= valIndex0 + 1;
 
                         if (TaggedTile { t: t, st: st } == expected) begin
-                            $display("[TESTBENCH] PASSED:");
+                            $display("[TESTBENCH] PASSED (pmu[1][1]):");
                             // printTile(TaggedTile { t: t, st: st });
                             $display("Expected [st = %0d]:", expected.st);
                             $display("Got [st = %0d]:", st);
                             // printTile(expected);
                         end else begin
-                            $display("[TESTBENCH] FAILED:");
+                            $display("[TESTBENCH] FAILED (pmu[1][1]):");
                             // printTile(TaggedTile { t: t, st: st });
                             $display("Expected [st = %0d]:", expected.st);
                             $display("Got [st = %0d]:", st);
@@ -499,11 +499,15 @@ module mkTestPMUGrid2(Empty);
             tagged Tag_EndToken .et: begin
                 $display("[TESTBENCH] End token received");
                 $display("All tests completed at cycle %d", pmus[1][1].get_cycle_count());
-                if (valIndex1 != fromInteger(valueOf(NUM_TEST_VALUES2))) begin
+                if (valIndex1 < fromInteger(valueOf(NUM_TEST_VALUES2))) begin
                     $display("[TESTBENCH] Not all values were processed in PMU 2");
+                end else if (valIndex1 > fromInteger(valueOf(NUM_TEST_VALUES2))) begin
+                    $display("[TESTBENCH] More values were processed in PMU 2 than expected");
                 end
-                if (valIndex0 != fromInteger(valueOf(NUM_TEST_VALUES1))) begin
+                if (valIndex0 < fromInteger(valueOf(NUM_TEST_VALUES1))) begin
                     $display("[TESTBENCH] Not all values were processed in PMU 1");
+                end else if (valIndex0 > fromInteger(valueOf(NUM_TEST_VALUES1))) begin
+                    $display("[TESTBENCH] More values were processed in PMU 1 than expected");
                 end
                 // $finish(0);
             end
@@ -525,13 +529,13 @@ module mkTestPMUGrid2(Empty);
                         valIndex1 <= valIndex1 + 1;
 
                         if (TaggedTile { t: t, st: st } == expected) begin
-                            $display("[TESTBENCH] PASSED:");
+                            $display("[TESTBENCH] PASSED (pmu[2][1]):");
                             // printTile(TaggedTile { t: t, st: st });
                             $display("Expected [st = %0d]:", expected.st);
                             $display("Got [st = %0d]:", st);
                             // printTile(expected);
                         end else begin
-                            $display("[TESTBENCH] FAILED:");
+                            $display("[TESTBENCH] FAILED (pmu[2][1]):");
                             // printTile(TaggedTile { t: t, st: st });
                             $display("Expected [st = %0d]:", expected.st);
                             $display("Got [st = %0d]:", st);

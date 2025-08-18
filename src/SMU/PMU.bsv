@@ -6,6 +6,7 @@
 // TODO: rank shouldnt be a parameter, should be stored in a reg and parsed from a config input
 // TODO: Fair aribitration between directions data is sent, currently prioritizes north, then south, then west, then east.
 // TODO: Tag pmus as bufferizes and dont store to neighbors if theyre also a bufferize
+// TODO: pipeline reads
 
 package PMU;
 
@@ -89,6 +90,7 @@ module mkPMU#(
     Reg#(Int#(32)) num_responses_received <- mkReg(0);
     Reg#(Int#(32)) num_space_requests_in_flight <- mkReg(0);
     ConfigReg#(Bool) data_request_in_flight <- mkConfigReg(False);
+    ConfigReg#(Bool) readReq_in_flight <- mkConfigReg(False);
 
     // Round robin counters
     Reg#(Dir) space_round_robin_counter <- mkReg(0);
@@ -97,6 +99,13 @@ module mkPMU#(
     Reg#(Dir) receive_send_data_round_robin_counter_load <- mkReg(0);
     Reg#(Dir) receive_request_data_round_robin_counter <- mkReg(0);
     Reg#(Dir) receive_send_update_pointer_round_robin_counter <- mkReg(0);
+    ConfigReg#(Bool) which_rule_reads_rr <- mkConfigReg(False); // True for request_tile, False for continue_load_tile, round robin
+    Wire#(Bool) which_rule_reads <- mkDWire(False); // True for request_tile, False for continue_load_tile, which actually reads
+    FIFOF#(RespTag) mem_rsp_src <- mkFIFOF;
+    FIFOF#(PendingReq) pending_q <- mkGFIFOF(False, True);
+    FIFOF#(LoadMeta)   load_meta_q <- mkGFIFOF(False, True);
+    // ConfigReg#(Maybe#(PendingReq)) pending   <- mkConfigReg(tagged Invalid);
+    // ConfigReg#(Maybe#(LoadMeta))   load_meta <- mkConfigReg(tagged Invalid);
 
     // directional selection wires
     Wire#(Maybe#(Dir)) request_space_wire <- mkDWire(tagged Invalid);
@@ -110,7 +119,6 @@ module mkPMU#(
     Wire#(Maybe#(Tuple2#(RequestStorageAddr, Dir))) receive_request_data_dequeued_wire <- mkDWire(tagged Invalid);
     ConfigReg#(Maybe#(Tuple2#(RequestStorageAddr, Dir))) receive_request_data_reg <- mkConfigReg(tagged Invalid);
 
-
     // ============================================================================
     // Rule Orderings
     // ============================================================================
@@ -120,15 +128,20 @@ module mkPMU#(
     (* execution_order = "receive_deallocate, receive_request_data, next_free" *)
     (* execution_order = "receive_request_data_do_work, next_free" *)
     (* execution_order = "receive_send_update_pointer, receive_send_data" *)
-    (* execution_order = "receive_send_update_pointer, store_tile" *)
+    (* execution_order = "store_tile, receive_send_update_pointer" *)
     (* execution_order = "receive_send_space, round_robin_space_request_enact, next_free" *)
     (* execution_order = "continue_load_tile, next_free" *)
     (* execution_order = "receive_deallocate_enact, next_free" *)
+    (* execution_order = "receive_data_from_banked_mem, next_free" *)
+    (* execution_order = "continue_load_tile, receive_data_from_banked_mem" *)
+    (* execution_order = "start_load_tile, receive_data_from_banked_mem" *)
+    (* execution_order = "receive_request_data_do_work, receive_data_from_banked_mem" *)
     (* descending_urgency = "deallocate_token, store_tile, round_robin_space_request" *)
     (* descending_urgency = "store_tile, receive_send_data" *)
     (* descending_urgency = "store_tile, receive_request_data, receive_request_data_enq" *)
     (* descending_urgency = "space_request_no_0, space_request_no_1, space_request_no_2, space_request_no_3, round_robin_space_request" *)
     (* conflict_free = "receive_send_data, continue_load_tile" *)
+    (* conflict_free = "receive_data_from_banked_mem, receive_send_data" *)
     (* conflict_free = "receive_send_data_enq, continue_load_tile" *)
     (* mutually_exclusive = "space_request_no_0, round_robin_space_request_enact" *)
     (* mutually_exclusive = "space_request_no_1, round_robin_space_request_enact" *)
@@ -195,7 +208,7 @@ module mkPMU#(
                 next_free_set <= tagged Valid StorageAddr { set: s, frame: 0, coords: coords };
             end
             default: begin
-                $display("***** Out of memory at PMU %d, %d, load token validity is %d *****", coords.x, coords.y, isValid(load_token));
+                $display("***** Out of memory at PMU %d, %d *****", coords.x, coords.y);
                 next_free_set <= tagged Invalid;
                 Int#(32) num_requests_sent = 0;
                 for (Int#(32) i = 0; i < 4; i = i + 1) begin
@@ -256,7 +269,20 @@ module mkPMU#(
         data_out.enq(tagged Tag_Data out);
     endrule
 
-    rule receive_request_data (initialized);
+    rule which_read (initialized);
+        Bool request_tile_can_read = isValid(roundRobinFind(receive_request_data_round_robin_counter, map(notEmpty, receive_request_data)));
+        Bool continue_load_tile_can_read = isValid(load_token) &&& !data_request_in_flight &&& !readReq_in_flight &&& (load_token.Valid.loc.coords == coords &&& data_out.notFull || load_token.Valid.loc.coords != coords &&& request_data[neighIdx(coords, load_token.Valid.loc.coords)].notFull);
+        if (request_tile_can_read && !continue_load_tile_can_read) begin
+            which_rule_reads <= True; // request_tile can read
+        end else if (continue_load_tile_can_read && !request_tile_can_read) begin
+            which_rule_reads <= False; // continue_load_tile can read
+        end else if (request_tile_can_read && continue_load_tile_can_read) begin
+            which_rule_reads <= which_rule_reads_rr; // both can read, so we alternate
+            which_rule_reads_rr <= !which_rule_reads_rr;
+        end
+    endrule
+
+    rule receive_request_data (initialized &&& which_rule_reads); // has read permission
         Vector#(4, Bool) has_data = map(notEmptyNotFull, zip(receive_request_data, send_data));
         Maybe#(Dir) m_idx = roundRobinFind(receive_request_data_round_robin_counter, has_data);
         if (m_idx matches tagged Valid .idx) begin
@@ -265,18 +291,21 @@ module mkPMU#(
             receive_request_data_round_robin_counter <= idx + 1;
         end
     endrule
-    rule receive_request_data_do_work (isValid(receive_request_data_dequeued_wire) || isValid(receive_request_data_reg));
+    rule receive_request_data_do_work ((isValid(receive_request_data_dequeued_wire) || isValid(receive_request_data_reg)) &&& which_rule_reads);
         let req_tuple = isValid(receive_request_data_dequeued_wire) ? receive_request_data_dequeued_wire.Valid : receive_request_data_reg.Valid;
         let req = tpl_1(req_tuple);
         let idx = tpl_2(req_tuple);
         let loc = req.loc;
-        let tile = mem.read(loc.set, loc.frame);
         let next = next_table[storageAddrToIndex(loc)];
+        mem.readReq(loc.set, loc.frame);
+        mem_rsp_src.enq(FromReq);
+        pending_q.enq(PendingReq { idx: idx, loc: loc, next: next, deallocate: req.deallocate });
+        // let tile = mem.read(loc.set, loc.frame);
+        // receive_request_data_send_data <= tagged Valid tuple2(DataWithNext { data: tile, loc: loc, next: next }, idx);
         if (req.deallocate &&& (!isValid(next) || loc.set != next.Valid.set)) begin
             free_list.freeSet(loc.set); 
         end
         // send data back
-        receive_request_data_send_data <= tagged Valid tuple2(DataWithNext { data: tile, loc: loc, next: next }, idx);
         // Update register for next cycle (only if we have a next location to process)
         if (isValid(next) && next.Valid.set == loc.set) begin
             receive_request_data_reg <= tagged Valid tuple2(RequestStorageAddr {loc: next.Valid, deallocate: req.deallocate}, idx);
@@ -286,6 +315,42 @@ module mkPMU#(
     endrule
     rule receive_request_data_enq (receive_request_data_send_data matches tagged Valid .data_with_next);
         send_data[tpl_2(data_with_next)].enq(tagged Tag_Load tpl_1(data_with_next));
+    endrule
+
+    rule receive_data_from_banked_mem (initialized);
+        let src = mem_rsp_src.first; mem_rsp_src.deq;
+        let m <- mem.readRsp;  // TaggedTile { t, st }
+        readReq_in_flight <= False; // read request is no longer in flight
+
+        case (src)
+            FromReq: begin
+                let p = pending_q.first; pending_q.deq;
+                receive_request_data_send_data <= tagged Valid tuple2(DataWithNext { data: m, loc: p.loc, next: p.next }, p.idx);
+            end
+            FromLoad: begin
+                let meta = load_meta_q.first; load_meta_q.deq;
+                let out_rank = m.st;
+                let next_set = meta.loc.set + 1;
+
+                if (meta.next matches tagged Valid .next_loc) begin
+                    next_set = next_loc.set;
+                    load_token <= tagged Valid LoadState { loc: next_loc, deallocate: meta.deallocate, st: meta.st, orig_token: meta.orig_token };
+                end else begin
+                    load_token <= tagged Invalid;
+                    out_rank = rank + meta.st;
+                    if (meta.deallocate) begin
+                        deallocate_reg <= tagged Valid truncate(meta.orig_token);
+                    end
+                end
+
+                receive_send_data_output <= tagged Valid tuple2(tagged Tag_Tile m.t, out_rank);
+
+                if (meta.deallocate && coords == meta.loc.coords && (!isValid(meta.next) || meta.loc.set != meta.next.Valid.set)) begin
+                    free_list.freeSet(meta.loc.set);
+                end
+            end
+        endcase
+        
     endrule
 
     rule receive_send_update_pointer (initialized);
@@ -345,7 +410,7 @@ module mkPMU#(
                     next_table[storageAddrToIndex(prev_stored)] <= tagged Valid p;
                 end
                 // update pointer chain
-                if (!prev_coords_local && prev_stored.frame == fromInteger(valueOf(FRAMES_PER_SET) - 1)) begin
+                if (!prev_coords_local && prev_stored.coords != p.coords) begin
                     send_update_pointer[neighIdx(coords, prev_stored.coords)].enq(tagged Tag_Update_Next_Table PrevToNextTag { prev: prev_stored, next: p }); // enq is unguarded
                 end 
             end
@@ -372,7 +437,7 @@ module mkPMU#(
         end
     endrule
 
-    rule continue_load_tile (initialized &&& load_token matches tagged Valid .load_tk_val &&& !data_request_in_flight);
+    rule continue_load_tile (initialized &&& load_token matches tagged Valid .load_tk_val &&& !data_request_in_flight &&& !which_rule_reads &&& !readReq_in_flight); // has read permission
         StorageAddr loc = load_tk_val.loc;
         let deallocate = load_tk_val.deallocate;
         let st = load_tk_val.st;
@@ -387,27 +452,31 @@ module mkPMU#(
             if (coords != loc.coords && request_data[dir].notFull) begin
                 data_request_in_flight <= True;
                 continue_load_tile_request_data <= tagged Valid tuple2(dir, RequestStorageAddr { loc: loc, deallocate: deallocate });
-            end else if (data_out.notFull) begin 
-                let tile = mem.read(set, loc.frame);
-                let out_rank = tile.st;
+            end else if (data_out.notFull) begin
+                readReq_in_flight <= True; 
+                mem.readReq(loc.set, loc.frame);
+                mem_rsp_src.enq(FromLoad);
+                load_meta_q.enq(LoadMeta { loc: loc, next: has_next_piece, deallocate: deallocate, st: st, orig_token: orig_token });
+                // let tile = mem.read(set, loc.frame);
+                // let out_rank = tile.st;
 
                 // Check if weve processed all entries for this token
-                let next_set = set + 1;
-                if (has_next_piece matches tagged Valid .next_loc) begin
-                    next_set = next_loc.set;
-                    load_token <= tagged Valid LoadState { loc: next_loc, deallocate: deallocate, st: st, orig_token: orig_token };
-                end else begin
-                    load_token <= tagged Invalid;
-                    out_rank = rank + st;
-                    if (deallocate) begin
-                        deallocate_reg <= tagged Valid truncate(orig_token); // used to reset the token_counter head
-                    end
-                end
+                // let next_set = set + 1;
+                // if (has_next_piece matches tagged Valid .next_loc) begin
+                //     next_set = next_loc.set;
+                //     load_token <= tagged Valid LoadState { loc: next_loc, deallocate: deallocate, st: st, orig_token: orig_token };
+                // end else begin
+                //     load_token <= tagged Invalid;
+                //     out_rank = rank + st;
+                //     if (deallocate) begin
+                //         deallocate_reg <= tagged Valid truncate(orig_token); // used to reset the token_counter head
+                //     end
+                // end
                 
-                receive_send_data_output <= tagged Valid tuple2(tagged Tag_Tile tile.t, out_rank);
-                if (deallocate && coords == loc.coords && set != next_set) begin
-                    free_list.freeSet(set); 
-                end
+                // receive_send_data_output <= tagged Valid tuple2(tagged Tag_Tile tile.t, out_rank);
+                // if (deallocate && coords == loc.coords && set != next_set) begin
+                //     free_list.freeSet(set); 
+                // end
             end
 
         end
@@ -440,7 +509,7 @@ module mkPMU#(
         $finish(0);
     endrule
 
-    rule start_load_end_token (initialized &&& !isValid(load_token) &&& !data_request_in_flight &&& token_in.first matches tagged Tag_EndToken .et);
+    rule start_load_end_token (initialized &&& !isValid(load_token) &&& !data_request_in_flight &&& !isValid(receive_send_data_output) &&& token_in.first matches tagged Tag_EndToken .et);
         $display("End token received in start load at PMU %d, %d", coords.x, coords.y);
         token_in.deq;
         // Print state of memory at end of stream
