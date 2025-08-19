@@ -179,4 +179,11 @@ typedef struct {
     Bit#(TLog#(MAX_ENTRIES)) orig_token;
 } LoadState deriving(Bits, Eq);
 
+typedef struct {
+  StorageAddr loc;
+  Bool deallocate;
+  StopToken st;
+  Bit#(TLog#(MAX_ENTRIES)) orig_token;
+} LoadMeta deriving (Bits, Eq);
+
 endpackage

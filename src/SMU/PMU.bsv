@@ -70,12 +70,16 @@ module mkPMU#(
     Reg#(Maybe#(LoadState)) load_token <- mkReg(tagged Invalid);
     ConfigReg#(Maybe#(Bit#(TLog#(MAX_ENTRIES)))) deallocate_reg <- mkConfigReg(tagged Invalid);
 
+    Reg#(Bool) read_inflight <- mkReg(False);
+    FIFO#(LoadMeta) load_meta_q <- mkFIFO;
+
     // ============================================================================
     // Rule Orderings
     // ============================================================================
 
     (* execution_order = "cycle_counter, store_tile, next_free, continue_load_tile" *)
     (* execution_order = "cycle_counter, start_load_tile" *)
+    (* execution_order = "next_free, retire_read" *)
     (* descending_urgency = "deallocate_token, store_tile" *)
 
     // ============================================================================
@@ -179,8 +183,11 @@ module mkPMU#(
 
         if (token_is_complete || has_next_piece) begin
             let {set, frame} = unpackLocation(loc);
-            let tile = mem.read(set, frame);
-            let out_rank = tile.st;
+            read_inflight <= True;
+            mem.readReq(set, frame);
+            load_meta_q.enq(LoadMeta{ loc: loc, deallocate: deallocate, st: st, orig_token: orig_token });
+            // let tile = mem.read(set, frame);
+            // let out_rank = tile.st;
 
             // Check if weve processed all entries for this token
             let next_set = set + 1;
@@ -190,21 +197,37 @@ module mkPMU#(
                 load_token <= tagged Valid LoadState { loc: next_loc, deallocate: deallocate, st: st, orig_token: orig_token };
             end else begin
                 load_token <= tagged Invalid;
-                out_rank = rank + st;
+                // out_rank = rank + st;
                 if (deallocate) begin
                     deallocate_reg <= tagged Valid truncate(orig_token); // used to reset the token_counter head
                 end
             end
             
-            data_out.enq(tagged Tag_Data tuple2(tagged Tag_Tile tile.t, out_rank));
+            // data_out.enq(tagged Tag_Data tuple2(tagged Tag_Tile tile.t, out_rank));
 
-            if (deallocate) begin
-                if (set != next_set) begin
-                    free_list.freeSet(set); 
-                end 
-            end
+            // if (deallocate && set != next_set) begin
+            //     free_list.freeSet(set);
+            // end
         end
     endrule
+
+    rule retire_read (read_inflight);
+        let m <- mem.readRsp;            // TaggedTile {t, st}
+        let meta = load_meta_q.first; load_meta_q.deq;
+        read_inflight <= False;
+
+        // out_rank mirrors your old logic:
+        let out_rank = isValid(next_table[meta.loc]) ? m.st : (rank + meta.st);
+        data_out.enq(tagged Tag_Data tuple2(tagged Tag_Tile m.t, out_rank));
+
+        // If you deferred free above, do it here once you know end-of-chain for this token:
+        let {set,_} = unpackLocation(meta.loc);
+        let next_set = case (next_table[meta.loc]) matches
+                        tagged Valid .n: begin let {ns,_} = unpackLocation(n); ns; end
+                        default: set + 1;
+                        endcase;
+        if (meta.deallocate && set != next_set) free_list.freeSet(set);
+        endrule
 
     // ============================================================================
     // End Token and Error Rules
@@ -225,7 +248,7 @@ module mkPMU#(
         $finish(0);
     endrule
 
-    rule start_load_tile_end_token (initialized &&& !isValid(load_token) &&& token_in.first matches tagged Tag_EndToken .et);
+    rule start_load_tile_end_token (initialized &&& !isValid(load_token) &&& token_in.first matches tagged Tag_EndToken .et &&& !read_inflight);
         // Print state of memory at end of stream
         for (Integer i = 0; i < valueOf(SETS); i = i + 1) begin
             if (!free_list.isSetFree(fromInteger(i))) begin
