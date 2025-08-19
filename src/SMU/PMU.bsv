@@ -1,11 +1,10 @@
 // TODO: Make everything work in fifo order. I think this should immediately work as long as I emit the token earlier. 
     // I already have the logic necessary to make sure i don't read data that hasn't been stored (untested)
-// TODO: Replace loop with find
+// TODO: Replace loops with find
 // TODO: Remove memory size dependency on tile size, should just have banks be as large as possible
-// TODO: Swap registers for SRAM
 // TODO: rank shouldnt be a parameter, should be stored in a reg and parsed from a config input
-// TODO: Fair aribitration between directions data is sent, currently prioritizes north, then south, then west, then east.
-// TODO: Tag pmus as bufferizes and dont store to neighbors if theyre also a bufferize
+// TODO: Fair arbitration between directions data is sent, currently prioritizes north, then south, then west, then east.
+// TODO: Tag pmus as bufferizes and dont store to neighbors if theyre also a bufferize -> not sure if this optimization is the best but suspect it would be helpful
 // TODO: pipeline reads more correctly, im definitely going slower than necessary
 
 package PMU;
